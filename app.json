@@ -1,25 +1,39 @@
 {
   "expo": {
-    "name": "adaptivity-tech-app",
-    "slug": "adaptivity-tech-app",
+    "name": "Adaptivity Tech Dispatch",
+    "slug": "adaptivity-tech-dispatch",
+    "owner": "adaptivityperformance",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#090a0f"
+    },
+    "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "icon": "./assets/icon.png",
+      "supportsTablet": true,
+      "bundleIdentifier": "com.adaptivityperformance.tech",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Adaptivity uses the camera to capture brake pad, tire tread, and engine photos for Digital Vehicle Inspection (DVI) reports.",
+        "NSLocationWhenInUseUsageDescription": "Adaptivity uses location to calculate mobile dispatch distance and display live van tracking.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Adaptivity uses continuous location to track mobile van dispatch progress while en route.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#090a0f"
       },
-      "predictiveBackGestureEnabled": false
+      "package": "com.adaptivityperformance.tech"
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "extra": {
+      "eas": {
+        "projectId": "d8f15ced-5ae8-40bc-aabc-61de0496aeb8"
+      }
     }
   }
 }
