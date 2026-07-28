@@ -19,6 +19,7 @@ export type TechConnectStatus = {
   chargesEnabled: boolean;
   payoutsEnabled: boolean;
   readyForPayouts: boolean;
+  taxIdProvided?: boolean;
   onboardingUrl?: string;
   hasDebitCardForInstant?: boolean;
   hasBankAccount?: boolean;

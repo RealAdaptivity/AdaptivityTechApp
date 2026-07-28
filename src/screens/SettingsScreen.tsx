@@ -12,9 +12,12 @@ import {
 import {
   fetchMyJobCapacity,
   fetchMyTechSpecialties,
+  fetchTechW9Status,
+  markTechW9Complete,
   updateMyJobCapacity,
   updateMyTechSpecialties,
   type TechJobCapacity,
+  type TechW9Status,
 } from '../lib/supabase';
 import { TECH_SPECIALTIES, type TechSpecialty } from '../lib/techSpecialties';
 
@@ -41,6 +44,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
   const [savingSpecialties, setSavingSpecialties] = useState(false);
   const [jobCapacity, setJobCapacity] = useState<TechJobCapacity>('multi');
   const [savingCapacity, setSavingCapacity] = useState(false);
+  const [w9, setW9] = useState<TechW9Status | null>(null);
+  const [w9Busy, setW9Busy] = useState(false);
   const taxYear = '2025';
 
   useEffect(() => {
@@ -48,6 +53,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
       setSpecialties(list as TechSpecialty[])
     );
     void fetchMyJobCapacity().then(setJobCapacity);
+    void fetchTechW9Status().then(setW9);
   }, []);
 
   const saveJobCapacity = async (capacity: TechJobCapacity) => {
@@ -104,6 +110,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
       } else if (id) {
         setBankName('Complete Stripe Express to unlock payouts');
       }
+      setW9(await fetchTechW9Status());
     } catch {
       setConnectStatus(null);
       setStripeExpressId(null);
@@ -233,6 +240,54 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
           <Text style={[styles.specialtyChipText, jobCapacity === 'standalone' && styles.specialtyChipTextOn]}>
             {jobCapacity === 'standalone' ? '✓ ' : ''}Standalone (single)
           </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>🧾</Text>
+          <View>
+            <Text style={styles.cardTitle}>IRS Form W-9 (required)</Text>
+            <Text style={styles.cardSubtitle}>
+              Submit your SSN or EIN in Stripe Express before claiming your first job. We use that for 1099s and do not store your SSN in our database.
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.statusText}>
+          {w9?.completed
+            ? `W-9 / tax ID on file${w9.completedAt ? ` · ${new Date(w9.completedAt).toLocaleDateString()}` : ''}`
+            : 'Not complete — finish Stripe tax ID, then mark below.'}
+        </Text>
+        {!w9?.completed && (
+          <TouchableOpacity
+            style={[styles.primaryButton, { marginTop: spacing.md }]}
+            disabled={w9Busy || !(connectStatus?.detailsSubmitted || connectStatus?.taxIdProvided)}
+            onPress={() => {
+              void (async () => {
+                setW9Busy(true);
+                try {
+                  await markTechW9Complete();
+                  setW9(await fetchTechW9Status());
+                  Alert.alert('W-9 complete', 'You can claim dispatch jobs now.');
+                } catch (e: unknown) {
+                  Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
+                } finally {
+                  setW9Busy(false);
+                }
+              })();
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.primaryButtonText}>
+              {w9Busy ? 'Saving…' : 'I submitted tax ID in Stripe — mark W-9 complete'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          style={{ marginTop: spacing.sm }}
+          onPress={() => void Linking.openURL('https://www.irs.gov/pub/irs-pdf/fw9.pdf')}
+        >
+          <Text style={styles.linkText}>Download blank IRS Form W-9 (PDF)</Text>
         </TouchableOpacity>
       </View>
 
@@ -418,6 +473,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   primaryButtonText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  linkText: { fontSize: 12, color: colors.brand.orange, textDecorationLine: 'underline' },
   updateButton: {
     backgroundColor: colors.bg.input,
     borderRadius: borderRadius.md,

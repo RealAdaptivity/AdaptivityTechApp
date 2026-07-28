@@ -141,12 +141,47 @@ export async function updateMyJobCapacity(capacity: TechJobCapacity) {
   if (error) throw error;
 }
 
+export type TechW9Status = {
+  completed: boolean;
+  completedAt: string | null;
+  taxIdProvided: boolean;
+};
+
+export async function fetchTechW9Status(): Promise<TechW9Status> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { completed: false, completedAt: null, taxIdProvided: false };
+  const { data } = await supabase
+    .from('mechanic_details')
+    .select('w9_completed_at, tax_id_provided')
+    .eq('profile_id', user.id)
+    .maybeSingle();
+  return {
+    completed: Boolean(data?.w9_completed_at),
+    completedAt: (data?.w9_completed_at as string) || null,
+    taxIdProvided: Boolean(data?.tax_id_provided),
+  };
+}
+
+export async function markTechW9Complete(): Promise<string> {
+  const { data, error } = await supabase.rpc('mark_tech_w9_complete');
+  if (error) throw error;
+  return String(data);
+}
+
 export async function claimBookingRow(referenceCode: string, mechanicId: string) {
   const { data: detail } = await supabase
     .from('mechanic_details')
-    .select('job_capacity')
+    .select('job_capacity, w9_completed_at')
     .eq('profile_id', mechanicId)
     .maybeSingle();
+
+  if (!detail?.w9_completed_at) {
+    throw new Error(
+      'Complete IRS Form W-9 before your first job: open Settings → connect Stripe Express and submit your SSN or EIN (tax ID).'
+    );
+  }
 
   if (detail?.job_capacity === 'standalone') {
     const { data: active, error: activeErr } = await supabase
