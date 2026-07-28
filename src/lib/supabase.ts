@@ -170,6 +170,36 @@ export async function markTechW9Complete(): Promise<string> {
   return String(data);
 }
 
+export async function fetchTechYearToDateCompensation(year = new Date().getFullYear()): Promise<{
+  year: number;
+  totalCents: number;
+  totalDollars: number;
+  thresholdDollars: number;
+  meetsNecThreshold: boolean;
+}> {
+  const start = `${year}-01-01T00:00:00.000Z`;
+  const end = `${year + 1}-01-01T00:00:00.000Z`;
+  const { data, error } = await supabase
+    .from('payments')
+    .select('tech_transfer_cents, status, created_at')
+    .gte('created_at', start)
+    .lt('created_at', end);
+  if (error) throw error;
+  const totalCents = (data ?? []).reduce((sum, row) => {
+    const status = String(row.status || '');
+    if (status !== 'succeeded' && status !== 'partially_refunded') return sum;
+    return sum + (Number(row.tech_transfer_cents) || 0);
+  }, 0);
+  const thresholdDollars = 600;
+  return {
+    year,
+    totalCents,
+    totalDollars: totalCents / 100,
+    thresholdDollars,
+    meetsNecThreshold: totalCents >= thresholdDollars * 100,
+  };
+}
+
 export async function claimBookingRow(referenceCode: string, mechanicId: string) {
   const { data: detail } = await supabase
     .from('mechanic_details')

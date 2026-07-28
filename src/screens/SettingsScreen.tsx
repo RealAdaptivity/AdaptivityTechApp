@@ -13,6 +13,7 @@ import {
   fetchMyJobCapacity,
   fetchMyTechSpecialties,
   fetchTechW9Status,
+  fetchTechYearToDateCompensation,
   markTechW9Complete,
   updateMyJobCapacity,
   updateMyTechSpecialties,
@@ -46,7 +47,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
   const [savingCapacity, setSavingCapacity] = useState(false);
   const [w9, setW9] = useState<TechW9Status | null>(null);
   const [w9Busy, setW9Busy] = useState(false);
-  const taxYear = '2025';
+  const [ytd, setYtd] = useState<{
+    year: number;
+    totalDollars: number;
+    meetsNecThreshold: boolean;
+  } | null>(null);
+  const taxYear = String(new Date().getFullYear());
 
   useEffect(() => {
     void fetchMyTechSpecialties().then((list) =>
@@ -54,6 +60,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     );
     void fetchMyJobCapacity().then(setJobCapacity);
     void fetchTechW9Status().then(setW9);
+    void fetchTechYearToDateCompensation()
+      .then((r) =>
+        setYtd({
+          year: r.year,
+          totalDollars: r.totalDollars,
+          meetsNecThreshold: r.meetsNecThreshold,
+        })
+      )
+      .catch(() => setYtd(null));
   }, []);
 
   const saveJobCapacity = async (capacity: TechJobCapacity) => {
@@ -367,30 +382,48 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
         <View style={styles.cardHeader}>
           <Text style={styles.cardEmoji}>📄</Text>
           <View>
-            <Text style={styles.cardTitle}>1099-NEC Tax Documentation Vault</Text>
-            <Text style={styles.cardSubtitle}>Annual contractor tax forms and IRS 1099 income statements.</Text>
+            <Text style={styles.cardTitle}>Form 1099-NEC</Text>
+            <Text style={styles.cardSubtitle}>
+              If Adaptivity pays you $600 or more in a calendar year, we must file Form 1099-NEC with the IRS and send you a copy by January 31 of the following year.
+            </Text>
           </View>
         </View>
 
         <View style={styles.taxRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.taxTitle}>Form 1099-NEC ({taxYear} Tax Year)</Text>
-            <Text style={styles.taxSubtitle}>IRS Non-Employee Compensation Report</Text>
+            <Text style={styles.taxTitle}>{taxYear} YTD compensation</Text>
+            <Text style={styles.taxSubtitle}>Your 70% job share toward the $600 threshold</Text>
           </View>
-          <TouchableOpacity style={styles.downloadButton} activeOpacity={0.8}>
-            <Text style={styles.downloadText}>⬇ PDF</Text>
-          </TouchableOpacity>
+          <Text style={styles.taxTitle}>
+            {ytd ? `$${ytd.totalDollars.toFixed(2)}` : '—'}
+          </Text>
         </View>
+        <Text style={[styles.taxSubtitle, { marginBottom: spacing.md }]}>
+          {ytd?.meetsNecThreshold
+            ? 'At or above $600 — Adaptivity will file 1099-NEC and furnish your copy by Jan 31 next year.'
+            : 'Under $600 so far this year — no 1099-NEC until the threshold is met.'}
+        </Text>
 
         <View style={styles.taxRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.taxTitle}>W-9 Taxpayer Verification</Text>
-            <Text style={[styles.taxSubtitle, { color: colors.status.success }]}>Status: Verified & Filed</Text>
+            <Text style={styles.taxTitle}>W-9 / tax ID</Text>
+            <Text
+              style={[
+                styles.taxSubtitle,
+                { color: w9?.completed ? colors.status.success : colors.brand.orange },
+              ]}
+            >
+              {w9?.completed ? 'On file via Stripe Express' : 'Required before first job — see section above'}
+            </Text>
           </View>
-          <TouchableOpacity style={styles.viewButton} activeOpacity={0.8}>
-            <Text style={styles.viewText}>View W-9</Text>
-          </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          style={{ marginTop: spacing.sm }}
+          onPress={() => void Linking.openURL('https://www.irs.gov/forms-pubs/about-form-1099-nec')}
+        >
+          <Text style={styles.linkText}>IRS: About Form 1099-NEC</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
