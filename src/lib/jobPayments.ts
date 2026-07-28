@@ -1,8 +1,26 @@
 import { supabase } from './supabase';
 
-export async function captureBookingPayment(bookingReference: string) {
+export type ChargeLineInput = {
+  title: string;
+  laborDollars: number;
+  partsDollars?: number;
+};
+
+export async function captureBookingPayment(
+  bookingReference: string,
+  opts?: {
+    mode?: 'charge' | 'diagnostic_only';
+    lineItems?: ChargeLineInput[];
+    techNotes?: string;
+  }
+) {
   const { data, error } = await supabase.functions.invoke('capture-booking-payment', {
-    body: { bookingReference },
+    body: {
+      bookingReference,
+      mode: opts?.mode ?? 'charge',
+      lineItems: opts?.lineItems,
+      techNotes: opts?.techNotes,
+    },
   });
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(String(data.error));
@@ -10,6 +28,22 @@ export async function captureBookingPayment(bookingReference: string) {
     ok: boolean;
     capturedAmountDollars?: number;
     techPayoutDollars?: number;
+    remainderDollars?: number;
     alreadyCaptured?: boolean;
+    transferWarning?: string | null;
+    message?: string;
   };
+}
+
+/** @deprecated Use captureBookingPayment with line items. */
+export async function submitBookingQuote(
+  bookingReference: string,
+  lineItems: ChargeLineInput[],
+  techNotes?: string
+) {
+  return captureBookingPayment(bookingReference, {
+    mode: 'charge',
+    lineItems,
+    techNotes,
+  });
 }

@@ -66,7 +66,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           </View>
           <Text style={styles.cardTitle}>Technician Portal Login</Text>
           <Text style={styles.cardSubtitle}>
-            Enter your approved ASE Technician credentials to access dispatch jobs & Stripe payouts.
+            Enter your approved tech credentials to access automotive dispatch jobs & Stripe payouts.
           </Text>
 
           {/* Email Input */}
@@ -109,7 +109,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           <View style={styles.aseBadge}>
             <View style={styles.aseBadgeRow}>
               <Text style={styles.aseBadgeLabel}>Account Requirements:</Text>
-              <Text style={styles.aseVerified}>ASE Verified</Text>
+              <Text style={styles.aseVerified}>Trade Verified</Text>
             </View>
             <Text style={styles.aseDescription}>
               Mobile dispatch accounts require completed background checks, tool verification, and linked Stripe Express payout setup.

@@ -9,6 +9,14 @@ import {
   openStripePayoutSetup,
   type TechConnectStatus,
 } from '../lib/stripePayouts';
+import {
+  fetchMyJobCapacity,
+  fetchMyTechSpecialties,
+  updateMyJobCapacity,
+  updateMyTechSpecialties,
+  type TechJobCapacity,
+} from '../lib/supabase';
+import { TECH_SPECIALTIES, type TechSpecialty } from '../lib/techSpecialties';
 
 interface SettingsScreenProps {
   onLogout: () => void;
@@ -29,7 +37,58 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
   const [loadingStripe, setLoadingStripe] = useState(true);
   const [linking, setLinking] = useState(false);
   const [openingDash, setOpeningDash] = useState(false);
+  const [specialties, setSpecialties] = useState<TechSpecialty[]>(['mechanical']);
+  const [savingSpecialties, setSavingSpecialties] = useState(false);
+  const [jobCapacity, setJobCapacity] = useState<TechJobCapacity>('multi');
+  const [savingCapacity, setSavingCapacity] = useState(false);
   const taxYear = '2025';
+
+  useEffect(() => {
+    void fetchMyTechSpecialties().then((list) =>
+      setSpecialties(list as TechSpecialty[])
+    );
+    void fetchMyJobCapacity().then(setJobCapacity);
+  }, []);
+
+  const saveJobCapacity = async (capacity: TechJobCapacity) => {
+    setSavingCapacity(true);
+    try {
+      await updateMyJobCapacity(capacity);
+      setJobCapacity(capacity);
+      Alert.alert(
+        'Saved',
+        capacity === 'multi'
+          ? 'Multi-job: you can claim several active dispatches.'
+          : 'Standalone: one active job at a time. Change anytime.'
+      );
+    } catch (e: unknown) {
+      Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setSavingCapacity(false);
+    }
+  };
+
+  const toggleSpecialty = (id: TechSpecialty) => {
+    setSpecialties((prev) => {
+      if (prev.includes(id)) {
+        const next = prev.filter((s) => s !== id);
+        return next.length ? next : prev;
+      }
+      return [...prev, id];
+    });
+  };
+
+  const saveSpecialties = async () => {
+    setSavingSpecialties(true);
+    try {
+      await updateMyTechSpecialties(specialties);
+      Alert.alert('Saved', 'Your trade specialties update which jobs you see on the board.');
+    } catch (e: unknown) {
+      Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setSavingSpecialties(false);
+    }
+  };
 
   const refreshStripe = useCallback(async () => {
     setLoadingStripe(true);
@@ -106,6 +165,77 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>🛠️</Text>
+          <View>
+            <Text style={styles.cardTitle}>Your trade specialties</Text>
+            <Text style={styles.cardSubtitle}>
+              Pick every trade you cover — mechanical, tires, glass, body, detail, mods, audio, tint, wrap/PPF, performance. Jobs match your trades.
+            </Text>
+          </View>
+        </View>
+        <View style={styles.specialtyGrid}>
+          {TECH_SPECIALTIES.map((s) => {
+            const on = specialties.includes(s.id);
+            return (
+              <TouchableOpacity
+                key={s.id}
+                style={[styles.specialtyChip, on && styles.specialtyChipOn]}
+                onPress={() => toggleSpecialty(s.id)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.specialtyChipText, on && styles.specialtyChipTextOn]}>
+                  {on ? '✓ ' : ''}
+                  {s.shortLabel}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <TouchableOpacity
+          style={styles.updateButton}
+          onPress={() => void saveSpecialties()}
+          disabled={savingSpecialties}
+        >
+          <Text style={styles.updateText}>
+            {savingSpecialties ? 'Saving…' : 'Save specialties'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>📋</Text>
+          <View>
+            <Text style={styles.cardTitle}>Work style</Text>
+            <Text style={styles.cardSubtitle}>
+              Multi-job = several active dispatches. Standalone = one job at a time. Change anytime.
+            </Text>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={[styles.specialtyChip, jobCapacity === 'multi' && styles.specialtyChipOn, { marginBottom: 8 }]}
+          onPress={() => void saveJobCapacity('multi')}
+          disabled={savingCapacity}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.specialtyChipText, jobCapacity === 'multi' && styles.specialtyChipTextOn]}>
+            {jobCapacity === 'multi' ? '✓ ' : ''}Multi-job
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.specialtyChip, jobCapacity === 'standalone' && styles.specialtyChipOn]}
+          onPress={() => void saveJobCapacity('standalone')}
+          disabled={savingCapacity}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.specialtyChipText, jobCapacity === 'standalone' && styles.specialtyChipTextOn]}>
+            {jobCapacity === 'standalone' ? '✓ ' : ''}Standalone (single)
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardEmoji}>🏦</Text>
@@ -298,6 +428,21 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   updateText: { fontSize: 13, fontWeight: '600', color: colors.brand.orange },
+  specialtyGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  specialtyChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border.primary,
+    backgroundColor: colors.bg.input,
+  },
+  specialtyChipOn: {
+    borderColor: colors.brand.orange,
+    backgroundColor: 'rgba(249,115,22,0.15)',
+  },
+  specialtyChipText: { color: colors.text.muted, fontWeight: '700', fontSize: 12 },
+  specialtyChipTextOn: { color: colors.brand.orange },
   taxRow: {
     flexDirection: 'row',
     alignItems: 'center',
