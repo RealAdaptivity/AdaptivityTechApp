@@ -9,9 +9,10 @@ export type ChargeLineInput = {
 export async function captureBookingPayment(
   bookingReference: string,
   opts?: {
-    mode?: 'charge' | 'diagnostic_only';
+    mode?: 'charge' | 'diagnostic_only' | 'no_show';
     lineItems?: ChargeLineInput[];
     techNotes?: string;
+    customerAgreedOnSite?: boolean;
   }
 ) {
   const { data, error } = await supabase.functions.invoke('capture-booking-payment', {
@@ -20,6 +21,7 @@ export async function captureBookingPayment(
       mode: opts?.mode ?? 'charge',
       lineItems: opts?.lineItems,
       techNotes: opts?.techNotes,
+      customerAgreedOnSite: opts?.customerAgreedOnSite,
     },
   });
   if (error) throw new Error(error.message);
@@ -45,5 +47,6 @@ export async function submitBookingQuote(
     mode: 'charge',
     lineItems,
     techNotes,
+    customerAgreedOnSite: true,
   });
 }

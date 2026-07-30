@@ -14,13 +14,29 @@ import {
   fetchMyTechSpecialties,
   fetchTechW9Status,
   fetchTechYearToDateCompensation,
+  fetchContractorAgreementStatus,
+  markContractorAgreementSigned,
   markTechW9Complete,
   updateMyJobCapacity,
   updateMyTechSpecialties,
   type TechJobCapacity,
   type TechW9Status,
+  type ContractorAgreementStatus,
 } from '../lib/supabase';
 import { TECH_SPECIALTIES, type TechSpecialty } from '../lib/techSpecialties';
+import {
+  INVENTORY_SPECIALTY_KEYS,
+  SPECIALTY_INVENTORY,
+  loadInventoryChecks,
+  saveInventoryChecks,
+} from '../lib/techInventory';
+import {
+  addUnavailableWindow,
+  listUnavailableWindows,
+  removeUnavailableWindow,
+  type UnavailableWindow,
+} from '../lib/techUnavailable';
+import { listOfflineJobPackets, type OfflineJobPacket } from '../lib/offlineJobPacket';
 
 interface SettingsScreenProps {
   onLogout: () => void;
@@ -47,12 +63,39 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
   const [savingCapacity, setSavingCapacity] = useState(false);
   const [w9, setW9] = useState<TechW9Status | null>(null);
   const [w9Busy, setW9Busy] = useState(false);
+  const [agreement, setAgreement] = useState<ContractorAgreementStatus | null>(null);
+  const [agreementBusy, setAgreementBusy] = useState(false);
   const [ytd, setYtd] = useState<{
     year: number;
     totalDollars: number;
     meetsNecThreshold: boolean;
   } | null>(null);
+  const [inventorySpecialty, setInventorySpecialty] = useState(INVENTORY_SPECIALTY_KEYS[0] || 'brakes');
+  const [checkedItems, setCheckedItems] = useState<string[]>([]);
+  const [savingInventory, setSavingInventory] = useState(false);
+  const [unavailable, setUnavailable] = useState<UnavailableWindow[]>([]);
+  const [unavailStart, setUnavailStart] = useState('');
+  const [unavailEnd, setUnavailEnd] = useState('');
+  const [unavailReason, setUnavailReason] = useState('');
+  const [unavailBusy, setUnavailBusy] = useState(false);
+  const [offlinePackets, setOfflinePackets] = useState<OfflineJobPacket[]>([]);
   const taxYear = String(new Date().getFullYear());
+
+  const refreshUnavailable = useCallback(async () => {
+    try {
+      setUnavailable(await listUnavailableWindows());
+    } catch {
+      setUnavailable([]);
+    }
+  }, []);
+
+  const loadInventory = useCallback(async (specialty: string) => {
+    try {
+      setCheckedItems(await loadInventoryChecks(specialty));
+    } catch {
+      setCheckedItems([]);
+    }
+  }, []);
 
   useEffect(() => {
     void fetchMyTechSpecialties().then((list) =>
@@ -60,6 +103,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     );
     void fetchMyJobCapacity().then(setJobCapacity);
     void fetchTechW9Status().then(setW9);
+    void fetchContractorAgreementStatus().then(setAgreement);
     void fetchTechYearToDateCompensation()
       .then((r) =>
         setYtd({
@@ -69,7 +113,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
         })
       )
       .catch(() => setYtd(null));
-  }, []);
+    void refreshUnavailable();
+    void listOfflineJobPackets().then(setOfflinePackets);
+  }, [refreshUnavailable]);
+
+  useEffect(() => {
+    void loadInventory(inventorySpecialty);
+  }, [inventorySpecialty, loadInventory]);
 
   const saveJobCapacity = async (capacity: TechJobCapacity) => {
     setSavingCapacity(true);
@@ -108,6 +158,47 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
       Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setSavingSpecialties(false);
+    }
+  };
+
+  const toggleInventoryItem = (item: string) => {
+    setCheckedItems((prev) =>
+      prev.includes(item) ? prev.filter((x) => x !== item) : [...prev, item]
+    );
+  };
+
+  const saveInventory = async () => {
+    setSavingInventory(true);
+    try {
+      await saveInventoryChecks(inventorySpecialty, checkedItems);
+      Alert.alert('Saved', 'Inventory checklist updated.');
+    } catch (e: unknown) {
+      Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setSavingInventory(false);
+    }
+  };
+
+  const handleAddUnavailable = async () => {
+    if (!unavailStart.trim() || !unavailEnd.trim()) {
+      Alert.alert('Missing times', 'Enter start and end as ISO dates (e.g. 2026-07-29T09:00:00).');
+      return;
+    }
+    setUnavailBusy(true);
+    try {
+      await addUnavailableWindow({
+        startsAt: new Date(unavailStart.trim()).toISOString(),
+        endsAt: new Date(unavailEnd.trim()).toISOString(),
+        reason: unavailReason,
+      });
+      setUnavailStart('');
+      setUnavailEnd('');
+      setUnavailReason('');
+      await refreshUnavailable();
+    } catch (e: unknown) {
+      Alert.alert('Could not add', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setUnavailBusy(false);
     }
   };
 
@@ -228,6 +319,165 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
 
       <View style={styles.card}>
         <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>🧰</Text>
+          <View>
+            <Text style={styles.cardTitle}>Van inventory checklist</Text>
+            <Text style={styles.cardSubtitle}>
+              Check off stock for each specialty before you roll out.
+            </Text>
+          </View>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+          <View style={styles.specialtyGrid}>
+            {INVENTORY_SPECIALTY_KEYS.map((key) => {
+              const on = inventorySpecialty === key;
+              return (
+                <TouchableOpacity
+                  key={key}
+                  style={[styles.specialtyChip, on && styles.specialtyChipOn]}
+                  onPress={() => setInventorySpecialty(key)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.specialtyChipText, on && styles.specialtyChipTextOn]}>
+                    {key.replace('_', ' ')}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </ScrollView>
+        {(SPECIALTY_INVENTORY[inventorySpecialty] || []).map((item) => {
+          const on = checkedItems.includes(item);
+          return (
+            <TouchableOpacity
+              key={item}
+              style={[styles.inventoryRow, on && styles.inventoryRowOn]}
+              onPress={() => toggleInventoryItem(item)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.specialtyChipText, on && styles.specialtyChipTextOn]}>
+                {on ? '☑ ' : '☐ '}
+                {item}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+        <TouchableOpacity
+          style={styles.updateButton}
+          onPress={() => void saveInventory()}
+          disabled={savingInventory}
+        >
+          <Text style={styles.updateText}>
+            {savingInventory ? 'Saving…' : 'Save inventory check'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>🚫</Text>
+          <View>
+            <Text style={styles.cardTitle}>Unavailable windows</Text>
+            <Text style={styles.cardSubtitle}>
+              Block times you cannot take jobs (ISO datetime, e.g. 2026-07-29T09:00).
+            </Text>
+          </View>
+        </View>
+        {unavailable.length === 0 ? (
+          <Text style={styles.statusText}>No upcoming unavailable windows.</Text>
+        ) : (
+          unavailable.map((w) => (
+            <View key={w.id} style={styles.unavailRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.taxTitle}>
+                  {new Date(w.startsAt).toLocaleString()} → {new Date(w.endsAt).toLocaleString()}
+                </Text>
+                {!!w.reason && <Text style={styles.taxSubtitle}>{w.reason}</Text>}
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  void (async () => {
+                    try {
+                      await removeUnavailableWindow(w.id);
+                      await refreshUnavailable();
+                    } catch (e: unknown) {
+                      Alert.alert('Remove failed', e instanceof Error ? e.message : 'Unknown error');
+                    }
+                  })();
+                }}
+              >
+                <Text style={[styles.linkText, { color: colors.status.error }]}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))
+        )}
+        <Text style={styles.inputLabel}>Starts at</Text>
+        <TextInput
+          style={styles.input}
+          value={unavailStart}
+          onChangeText={setUnavailStart}
+          placeholder="2026-07-29T09:00"
+          placeholderTextColor={colors.text.muted}
+          autoCapitalize="none"
+        />
+        <Text style={styles.inputLabel}>Ends at</Text>
+        <TextInput
+          style={styles.input}
+          value={unavailEnd}
+          onChangeText={setUnavailEnd}
+          placeholder="2026-07-29T17:00"
+          placeholderTextColor={colors.text.muted}
+          autoCapitalize="none"
+        />
+        <Text style={styles.inputLabel}>Reason (optional)</Text>
+        <TextInput
+          style={styles.input}
+          value={unavailReason}
+          onChangeText={setUnavailReason}
+          placeholder="Vacation, shop day…"
+          placeholderTextColor={colors.text.muted}
+        />
+        <TouchableOpacity
+          style={styles.updateButton}
+          disabled={unavailBusy}
+          onPress={() => void handleAddUnavailable()}
+        >
+          <Text style={styles.updateText}>{unavailBusy ? 'Saving…' : 'Add window'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {offlinePackets.length > 0 && (
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardEmoji}>📦</Text>
+            <View>
+              <Text style={styles.cardTitle}>Offline packet</Text>
+              <Text style={styles.cardSubtitle}>
+                Cached active jobs for when the board is unreachable.
+              </Text>
+            </View>
+          </View>
+          {offlinePackets.map((p) => (
+            <View key={p.id} style={styles.unavailRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.taxTitle}>
+                  {p.referenceCode} · {p.customer}
+                </Text>
+                <Text style={styles.taxSubtitle}>
+                  {p.vehicle} · {p.address}
+                </Text>
+                <Text style={styles.taxSubtitle}>{p.phone}</Text>
+                {p.services.length > 0 && (
+                  <Text style={styles.taxSubtitle}>{p.services.join(' · ')}</Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
           <Text style={styles.cardEmoji}>📋</Text>
           <View>
             <Text style={styles.cardTitle}>Work style</Text>
@@ -304,6 +554,61 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
         >
           <Text style={styles.linkText}>Download blank IRS Form W-9 (PDF)</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>📜</Text>
+          <View>
+            <Text style={styles.cardTitle}>Contractor Agreement (required)</Text>
+            <Text style={styles.cardSubtitle}>
+              Accept 1099 contractor terms (liability, workers’ comp notice, tax forms, payouts) before claiming jobs.
+              Print/save the PDF from the web tech portal Settings anytime.
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.statusText}>
+          {agreement?.signed
+            ? `Accepted${agreement.signedAt ? ` · ${new Date(agreement.signedAt).toLocaleDateString()}` : ''}`
+            : 'Not accepted yet'}
+        </Text>
+        {!agreement?.signed && (
+          <TouchableOpacity
+            style={[styles.primaryButton, { marginTop: spacing.md }]}
+            disabled={agreementBusy}
+            onPress={() => {
+              Alert.alert(
+                'Accept agreement?',
+                'You are an independent contractor (1099), not an employee. You are responsible for liability/insurance on customer vehicles, Texas workers’ comp is not provided by Adaptivity, and you must complete W-9 via Stripe. Accept to continue.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'I accept',
+                    onPress: () => {
+                      void (async () => {
+                        setAgreementBusy(true);
+                        try {
+                          const signedAt = await markContractorAgreementSigned();
+                          setAgreement({ signed: true, signedAt });
+                          Alert.alert('Accepted', 'You can claim jobs once W-9 is also complete.');
+                        } catch (e: unknown) {
+                          Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
+                        } finally {
+                          setAgreementBusy(false);
+                        }
+                      })();
+                    },
+                  },
+                ]
+              );
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.primaryButtonText}>
+              {agreementBusy ? 'Saving…' : 'I accept the Independent Contractor Agreement'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.card}>
@@ -532,6 +837,28 @@ const styles = StyleSheet.create({
   },
   specialtyChipText: { color: colors.text.muted, fontWeight: '700', fontSize: 12 },
   specialtyChipTextOn: { color: colors.brand.orange },
+  inventoryRow: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border.primary,
+    backgroundColor: colors.bg.input,
+    marginBottom: 6,
+  },
+  inventoryRowOn: {
+    borderColor: colors.brand.orange,
+    backgroundColor: 'rgba(249,115,22,0.12)',
+  },
+  unavailRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border.primary,
+    marginBottom: 4,
+  },
   taxRow: {
     flexDirection: 'row',
     alignItems: 'center',

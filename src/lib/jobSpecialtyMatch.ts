@@ -1,6 +1,6 @@
-import type { TechSpecialty } from './techSpecialties';
+import { TECH_SPECIALTIES, type TechSpecialty } from './techSpecialties';
 
-function specialtyForLabel(label: string): TechSpecialty {
+export function specialtyForLabel(label: string): TechSpecialty {
   const t = label.toLowerCase();
   if (/\b(tint|window\s*tint|ceramic\s*tint)\b/.test(t) || t.includes('window tint')) return 'tint';
   if (/\b(ppf|paint\s*protection|clear\s*bra)\b/.test(t)) return 'wrap';
@@ -45,8 +45,36 @@ function specialtyForLabel(label: string): TechSpecialty {
   return 'mechanical';
 }
 
+export function specialtiesNeededForJob(jobServices: string[]): TechSpecialty[] {
+  const needed = new Set(
+    (jobServices.length ? jobServices : ['diagnostic']).map(specialtyForLabel)
+  );
+  return [...needed];
+}
+
 export function techCanClaimServices(techSpecialties: string[], jobServices: string[]): boolean {
   const has = new Set(techSpecialties.length ? techSpecialties : ['mechanical']);
-  const needed = new Set((jobServices.length ? jobServices : ['diagnostic']).map(specialtyForLabel));
-  return [...needed].every((s) => has.has(s));
+  return specialtiesNeededForJob(jobServices).every((s) => has.has(s));
+}
+
+/** Short labels for specialty chips + which of those the tech already has. */
+export function specialtyMatchHint(
+  techSpecialties: string[],
+  jobServices: string[]
+): { chips: string[]; matchedLabels: string[]; hint: string } {
+  const needed = specialtiesNeededForJob(jobServices);
+  const has = new Set(techSpecialties.length ? techSpecialties : ['mechanical']);
+  const chips = needed.map(
+    (id) => TECH_SPECIALTIES.find((s) => s.id === id)?.shortLabel || id
+  );
+  const matchedLabels = needed
+    .filter((id) => has.has(id))
+    .map((id) => TECH_SPECIALTIES.find((s) => s.id === id)?.shortLabel || id);
+  const hint =
+    matchedLabels.length > 0
+      ? `Matches your: ${matchedLabels.join(', ')}`
+      : chips.length
+        ? `Needs: ${chips.join(', ')}`
+        : '';
+  return { chips, matchedLabels, hint };
 }

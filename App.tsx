@@ -6,6 +6,7 @@ import { LoginScreen } from './src/screens/LoginScreen';
 import { JobsScreen } from './src/screens/JobsScreen';
 import { EarningsScreen } from './src/screens/EarningsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { registerDevicePushToken } from './src/lib/pushNotifications';
 
 const colors = {
   bg: { primary: '#090a0f', card: '#12141c' },
@@ -27,9 +28,14 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('jobs');
 
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+    void registerDevicePushToken('tech');
+  };
+
   // Show login screen when not authenticated
   if (!isAuthenticated) {
-    return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
+    return <LoginScreen onLogin={handleLogin} />;
   }
 
   return (

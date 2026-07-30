@@ -28,6 +28,7 @@ export type DispatchBooking = {
   quoteStatus: string;
   holdAmountCents: number | null;
   paymentStatus: string;
+  preferredDate: string | null;
 };
 
 function mapRow(row: Record<string, unknown>): DispatchBooking {
@@ -47,6 +48,7 @@ function mapRow(row: Record<string, unknown>): DispatchBooking {
     quoteStatus: (row.quote_status as string) || 'none',
     holdAmountCents: (row.hold_amount_cents as number | null) ?? null,
     paymentStatus: (row.payment_status as string) || 'none',
+    preferredDate: (row.preferred_date as string | null) ?? null,
   };
 }
 
@@ -170,6 +172,33 @@ export async function markTechW9Complete(): Promise<string> {
   return String(data);
 }
 
+export type ContractorAgreementStatus = {
+  signed: boolean;
+  signedAt: string | null;
+};
+
+export async function fetchContractorAgreementStatus(): Promise<ContractorAgreementStatus> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { signed: false, signedAt: null };
+  const { data } = await supabase
+    .from('mechanic_details')
+    .select('contractor_agreement_signed_at')
+    .eq('profile_id', user.id)
+    .maybeSingle();
+  return {
+    signed: Boolean(data?.contractor_agreement_signed_at),
+    signedAt: (data?.contractor_agreement_signed_at as string) || null,
+  };
+}
+
+export async function markContractorAgreementSigned(): Promise<string> {
+  const { data, error } = await supabase.rpc('mark_contractor_agreement_signed');
+  if (error) throw error;
+  return String(data);
+}
+
 export async function fetchTechYearToDateCompensation(year = new Date().getFullYear()): Promise<{
   year: number;
   totalCents: number;
@@ -203,13 +232,19 @@ export async function fetchTechYearToDateCompensation(year = new Date().getFullY
 export async function claimBookingRow(referenceCode: string, mechanicId: string) {
   const { data: detail } = await supabase
     .from('mechanic_details')
-    .select('job_capacity, w9_completed_at')
+    .select('job_capacity, w9_completed_at, contractor_agreement_signed_at')
     .eq('profile_id', mechanicId)
     .maybeSingle();
 
   if (!detail?.w9_completed_at) {
     throw new Error(
       'Complete IRS Form W-9 before your first job: open Settings → connect Stripe Express and submit your SSN or EIN (tax ID).'
+    );
+  }
+
+  if (!detail?.contractor_agreement_signed_at) {
+    throw new Error(
+      'Accept the Independent Contractor Agreement in Settings before claiming your first job.'
     );
   }
 
@@ -231,7 +266,7 @@ export async function claimBookingRow(referenceCode: string, mechanicId: string)
 
   const { error } = await supabase
     .from('bookings')
-    .update({ status: 'EN_ROUTE', mechanic_id: mechanicId, eta_minutes: 12, distance_miles: 5 })
+    .update({ status: 'EN_ROUTE', mechanic_id: mechanicId, eta_minutes: 20, distance_miles: 8 })
     .eq('reference_code', referenceCode);
   if (error) throw error;
 }

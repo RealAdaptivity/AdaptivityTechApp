@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, SafeAreaView,
-  StatusBar, KeyboardAvoidingView, Platform, StyleSheet, Alert,
+  StatusBar, KeyboardAvoidingView, Platform, StyleSheet, Alert, Image,
 } from 'react-native';
 import { colors, spacing, borderRadius } from '../theme/colors';
 import { signInTech, ensureTechProfile } from '../lib/supabase';
@@ -50,9 +50,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
       >
         {/* Logo Header */}
         <View style={styles.logoContainer}>
-          <View style={styles.logoIcon}>
-            <Text style={styles.logoEmoji}>🔧</Text>
-          </View>
+          <Image source={require('../../assets/logo.png')} style={styles.logoIcon} />
           <Text style={styles.logoTitle}>
             ADAPTIVITY <Text style={styles.logoAccent}>TECH</Text>
           </Text>
@@ -141,18 +139,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing['3xl'],
   },
   logoIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: borderRadius.md,
-    backgroundColor: colors.bg.card,
-    borderWidth: 2,
-    borderColor: colors.brand.orange,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 72,
+    height: 72,
     marginBottom: spacing.md,
-  },
-  logoEmoji: {
-    fontSize: 22,
   },
   logoTitle: {
     fontSize: 22,

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator, Platform,
+  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator, Platform, Share,
 } from 'react-native';
 import { colors, spacing, borderRadius } from '../theme/colors';
 import {
@@ -11,6 +11,7 @@ import {
   type TechPayoutRow,
 } from '../lib/stripePayouts';
 import { countsTowardLedgerPending, formatTechPayoutLabel } from '../lib/payoutStatusLabels';
+import { buildWeeklyEarningsSummaryText } from '../lib/weeklyEarningsSummary';
 
 function formatPayoutStatus(row: TechPayoutRow): string {
   const label = formatTechPayoutLabel(row.payoutStatus, row.paymentStatus);
@@ -86,6 +87,15 @@ export const EarningsScreen: React.FC = () => {
       );
     } finally {
       setCashingOut(false);
+    }
+  };
+
+  const shareWeeklySummary = async () => {
+    const text = buildWeeklyEarningsSummaryText(rows);
+    try {
+      await Share.share({ message: text, title: 'Weekly earnings summary' });
+    } catch (e: unknown) {
+      Alert.alert('Share failed', e instanceof Error ? e.message : 'Could not share summary');
     }
   };
 
@@ -181,6 +191,9 @@ export const EarningsScreen: React.FC = () => {
       <View style={styles.weeklyCard}>
         <Text style={styles.weeklyLabel}>Paid out (recent)</Text>
         <Text style={styles.weeklyAmount}>${weeklyTotal.toFixed(2)}</Text>
+        <TouchableOpacity style={styles.pdfBtn} onPress={() => void shareWeeklySummary()}>
+          <Text style={styles.pdfBtnText}>Weekly summary PDF</Text>
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -274,4 +287,12 @@ const styles = StyleSheet.create({
   },
   weeklyLabel: { fontSize: 12, color: colors.text.muted },
   weeklyAmount: { fontSize: 24, fontWeight: '800', color: colors.text.primary, marginTop: 4 },
+  pdfBtn: {
+    marginTop: spacing.md,
+    backgroundColor: colors.brand.orange,
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.lg,
+  },
+  pdfBtnText: { color: '#fff', fontWeight: '800', fontSize: 12 },
 });
