@@ -7,6 +7,7 @@ import {
   fetchTechConnectStatus,
   openExpressDashboard,
   openStripePayoutSetup,
+  resetStaleStripeConnectLink,
   type TechConnectStatus,
 } from '../lib/stripePayouts';
 import {
@@ -238,27 +239,72 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     try {
       const { onboardingUrl } = await openStripePayoutSetup();
       await Linking.openURL(onboardingUrl);
+      await refreshStripe();
     } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Could not open Stripe onboarding.';
       Alert.alert(
         'Stripe setup',
-        e instanceof Error ? e.message : 'Could not open Stripe onboarding.'
+        /technician profile required/i.test(msg)
+          ? 'This login is not an approved tech account. Use your approved technician login.'
+          : msg
       );
     } finally {
       setLinking(false);
     }
   };
 
+  const handleResetStripeLink = () => {
+    Alert.alert(
+      'Reset Stripe link',
+      'Clears a saved test-mode Connect account so you can start Live onboarding. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setLinking(true);
+              try {
+                await resetStaleStripeConnectLink();
+                setStripeExpressId(null);
+                setConnectStatus(null);
+                setBankName('Link Stripe for instant debit payouts');
+                await refreshStripe();
+                Alert.alert('Reset done', 'Tap Connect Stripe Express to start Live onboarding.');
+              } catch (e: unknown) {
+                Alert.alert(
+                  'Reset failed',
+                  e instanceof Error ? e.message : 'Could not reset Stripe link.'
+                );
+              } finally {
+                setLinking(false);
+              }
+            })();
+          },
+        },
+      ]
+    );
+  };
+
   const handleExpressDashboard = async () => {
     setOpeningDash(true);
     try {
-      const { loginUrl } = await openExpressDashboard();
-      await Linking.openURL(loginUrl);
+      const result = await openExpressDashboard();
+      await Linking.openURL(result.loginUrl);
+      if (result.openedOnboarding) {
+        Alert.alert(
+          'Finish onboarding first',
+          'No Live Express account yet — opened Stripe setup instead. Complete it, then come back for the Dashboard.'
+        );
+      }
+      await refreshStripe();
     } catch (e: unknown) {
       Alert.alert(
         'Express Dashboard',
         e instanceof Error
           ? e.message
-          : 'Could not open Express Dashboard. Finish Connect Stripe first.'
+          : 'Could not open Express Dashboard. Tap Connect Stripe Express first.'
       );
     } finally {
       setOpeningDash(false);
@@ -648,7 +694,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
           )}
         </View>
 
-        {stripeExpressId ? (
+        {stripeExpressId && connectStatus?.detailsSubmitted ? (
           <TouchableOpacity
             style={styles.primaryButton}
             activeOpacity={0.8}
@@ -681,6 +727,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
             </Text>
           )}
         </TouchableOpacity>
+        {!connectStatus?.readyForPayouts && (
+          <TouchableOpacity
+            style={[styles.updateButton, { marginTop: spacing.sm }]}
+            activeOpacity={0.8}
+            onPress={handleResetStripeLink}
+            disabled={linking}
+          >
+            <Text style={styles.updateText}>Reset Stripe link (test→Live)</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.card}>

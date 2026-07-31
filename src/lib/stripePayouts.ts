@@ -87,6 +87,30 @@ export async function ensureTechProfile(vanNumber?: string) {
   if (error) throw error;
 }
 
+async function clearMyStripeConnectAccountId(): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase
+    .from('mechanic_details')
+    .update({ stripe_account_id: null })
+    .eq('profile_id', user.id);
+  if (error) throw error;
+}
+
+export async function resetStaleStripeConnectLink(): Promise<void> {
+  await ensureTechProfile();
+  await clearMyStripeConnectAccountId();
+  try {
+    await invokeEdgeFunction<TechConnectStatus>('create-stripe-account-link', {
+      action: 'reset',
+    });
+  } catch {
+    /* local clear is enough to unblock Live onboarding */
+  }
+}
+
 export async function fetchTechConnectStatus(): Promise<TechConnectStatus | null> {
   const {
     data: { user },
@@ -101,28 +125,104 @@ export async function fetchTechConnectStatus(): Promise<TechConnectStatus | null
 export async function openStripePayoutSetup(): Promise<TechConnectStatus & { onboardingUrl: string }> {
   await ensureTechProfile();
   const urls = techStripeReturnUrls();
-  const data = await invokeEdgeFunction<TechConnectStatus & { onboardingUrl: string }>(
-    'create-stripe-account-link',
-    urls
-  );
+
+  const {
+    data: { user: me },
+  } = await supabase.auth.getUser();
+  if (me) {
+    const { data: row } = await supabase
+      .from('mechanic_details')
+      .select('stripe_account_id')
+      .eq('profile_id', me.id)
+      .maybeSingle();
+    const localId =
+      typeof row?.stripe_account_id === 'string' && row.stripe_account_id.startsWith('acct_')
+        ? row.stripe_account_id
+        : null;
+    if (localId) {
+      try {
+        const sync = await invokeEdgeFunction<TechConnectStatus>('create-stripe-account-link', {
+          action: 'sync',
+        });
+        if (!sync?.accountId?.startsWith('acct_')) {
+          await clearMyStripeConnectAccountId();
+        }
+      } catch {
+        await clearMyStripeConnectAccountId();
+      }
+    }
+  }
+
+  let data: (TechConnectStatus & { onboardingUrl: string }) | null = null;
+  try {
+    data = await invokeEdgeFunction<TechConnectStatus & { onboardingUrl: string }>(
+      'create-stripe-account-link',
+      urls
+    );
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/no such account|resource_missing|similar object exists in test mode|technician profile required/i.test(msg)) {
+      if (/technician profile required/i.test(msg)) throw e;
+      await clearMyStripeConnectAccountId();
+      data = await invokeEdgeFunction<TechConnectStatus & { onboardingUrl: string }>(
+        'create-stripe-account-link',
+        { ...urls, forceRecreate: true }
+      );
+    } else {
+      throw e;
+    }
+  }
+
   if (!data?.onboardingUrl) {
-    throw new Error('Stripe onboarding URL missing from server');
+    await clearMyStripeConnectAccountId();
+    data = await invokeEdgeFunction<TechConnectStatus & { onboardingUrl: string }>(
+      'create-stripe-account-link',
+      { ...urls, forceRecreate: true }
+    );
+  }
+  if (!data?.onboardingUrl) {
+    throw new Error(
+      'Stripe onboarding URL missing. Reset the Stripe link in Settings, then try again.'
+    );
   }
   return data;
 }
 
-/** Where techs add Instant debit cards (Account Link onboarding only collects bank). */
-export async function openExpressDashboard(): Promise<{ loginUrl: string } & TechConnectStatus> {
+/**
+ * Express Dashboard requires a Live Express account. If missing (test→Live cutover),
+ * start onboarding and return that URL as loginUrl.
+ */
+export async function openExpressDashboard(): Promise<
+  { loginUrl: string } & TechConnectStatus & { openedOnboarding?: boolean }
+> {
   await ensureTechProfile();
-  const data = await invokeEdgeFunction<TechConnectStatus & { loginUrl?: string; expressDashboardUrl?: string }>(
-    'create-stripe-account-link',
-    { action: 'express_login' }
-  );
-  const loginUrl = data.loginUrl || data.expressDashboardUrl;
-  if (!loginUrl?.startsWith('http')) {
-    throw new Error('Could not open Express Dashboard. Finish Connect Stripe Express first.');
+
+  try {
+    const data = await invokeEdgeFunction<
+      TechConnectStatus & { loginUrl?: string; expressDashboardUrl?: string }
+    >('create-stripe-account-link', { action: 'express_login' });
+    const loginUrl = data.loginUrl || data.expressDashboardUrl;
+    if (loginUrl?.startsWith('http')) {
+      return { ...data, loginUrl };
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (
+      !/connect stripe|finish connect|no such account|resource_missing|test mode|express first/i.test(
+        msg
+      )
+    ) {
+      throw e;
+    }
+    await clearMyStripeConnectAccountId().catch(() => undefined);
   }
-  return { ...data, loginUrl };
+
+  const onboard = await openStripePayoutSetup();
+  return {
+    ...onboard,
+    loginUrl: onboard.onboardingUrl,
+    openedOnboarding: true,
+  };
 }
 
 export async function fetchMechanicStripeAccountId(): Promise<string | null> {
