@@ -10,6 +10,8 @@ import {
   resetStaleStripeConnectLink,
   type TechConnectStatus,
 } from '../lib/stripePayouts';
+import { openExternalUrl } from '../lib/openExternalUrl';
+import { errorMessage } from '../lib/errorMessage';
 import {
   fetchMyJobCapacity,
   fetchMyTechSpecialties,
@@ -134,7 +136,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
           : 'Standalone: one active job at a time. Change anytime.'
       );
     } catch (e: unknown) {
-      Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === 'object' && e && 'message' in e
+            ? String((e as { message: unknown }).message)
+            : 'Unknown error';
+      Alert.alert('Could not save', msg);
     } finally {
       setSavingCapacity(false);
     }
@@ -238,10 +246,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     setLinking(true);
     try {
       const { onboardingUrl } = await openStripePayoutSetup();
-      await Linking.openURL(onboardingUrl);
+      await openExternalUrl(onboardingUrl, 'Stripe onboarding');
       await refreshStripe();
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Could not open Stripe onboarding.';
+      const msg = errorMessage(e, 'Could not open Stripe onboarding.');
       Alert.alert(
         'Stripe setup',
         /technician profile required/i.test(msg)
@@ -291,7 +299,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     setOpeningDash(true);
     try {
       const result = await openExpressDashboard();
-      await Linking.openURL(result.loginUrl);
+      await openExternalUrl(result.loginUrl, 'Stripe Express');
       if (result.openedOnboarding) {
         Alert.alert(
           'Finish onboarding first',
@@ -302,9 +310,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     } catch (e: unknown) {
       Alert.alert(
         'Express Dashboard',
-        e instanceof Error
-          ? e.message
-          : 'Could not open Express Dashboard. Tap Connect Stripe Express first.'
+        errorMessage(e, 'Could not open Express Dashboard. Tap Connect Stripe Express first.')
       );
     } finally {
       setOpeningDash(false);

@@ -4,7 +4,7 @@ import {
   StatusBar, KeyboardAvoidingView, Platform, StyleSheet, Alert, Image,
 } from 'react-native';
 import { colors, spacing, borderRadius } from '../theme/colors';
-import { signInTech, ensureTechProfile } from '../lib/supabase';
+import { signInTech, ensureTechProfile, hasMechanicDetails } from '../lib/supabase';
 
 interface LoginScreenProps {
   onLogin: () => void;
@@ -30,11 +30,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     try {
       await ensureTechProfile();
     } catch (profileErr: unknown) {
+      // Existing techs already have mechanic_details — don't block login on RPC noise.
+      const alreadyTech = await hasMechanicDetails();
+      if (alreadyTech) {
+        setLoading(false);
+        onLogin();
+        return;
+      }
       setLoading(false);
-      Alert.alert(
-        'Technician profile',
-        profileErr instanceof Error ? profileErr.message : 'Could not register technician profile.'
-      );
+      const msg =
+        profileErr instanceof Error
+          ? profileErr.message
+          : typeof profileErr === 'object' &&
+              profileErr &&
+              'message' in profileErr &&
+              typeof (profileErr as { message: unknown }).message === 'string'
+            ? (profileErr as { message: string }).message
+            : 'Could not register technician profile.';
+      Alert.alert('Technician profile', msg);
       return;
     }
     setLoading(false);

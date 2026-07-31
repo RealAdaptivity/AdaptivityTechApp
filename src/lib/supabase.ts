@@ -1,3 +1,5 @@
+import 'react-native-url-polyfill/auto';
+import { AppState, type AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '../config/supabasePublic';
@@ -9,6 +11,15 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     persistSession: true,
     detectSessionInUrl: false,
   },
+});
+
+// Keep auth tokens fresh while the app is foregrounded (Supabase RN guidance).
+AppState.addEventListener('change', (state: AppStateStatus) => {
+  if (state === 'active') {
+    void supabase.auth.startAutoRefresh();
+  } else {
+    void supabase.auth.stopAutoRefresh();
+  }
 });
 
 export type JobStatus = 'UNASSIGNED' | 'EN_ROUTE' | 'ON_SITE' | 'COMPLETED' | 'CANCELED';
@@ -64,7 +75,25 @@ export async function ensureTechProfile(vanNumber?: string, specialties?: string
     payload.p_specialties = specialties;
   }
   const { error } = await supabase.rpc('ensure_tech_profile', payload);
-  if (error) throw error;
+  if (error) {
+    const err = new Error(error.message || 'Could not register technician profile');
+    (err as Error & { code?: string }).code = error.code;
+    throw err;
+  }
+}
+
+/** True if this account already has a mechanic_details row (can dispatch). */
+export async function hasMechanicDetails(): Promise<boolean> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return false;
+  const { data } = await supabase
+    .from('mechanic_details')
+    .select('profile_id')
+    .eq('profile_id', user.id)
+    .maybeSingle();
+  return Boolean(data?.profile_id);
 }
 
 export async function fetchMyTechSpecialties(): Promise<string[]> {
@@ -135,12 +164,11 @@ export async function updateMyJobCapacity(capacity: TechJobCapacity) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Not signed in');
-  await ensureTechProfile();
-  const { error } = await supabase
-    .from('mechanic_details')
-    .update({ job_capacity: capacity })
-    .eq('profile_id', user.id);
-  if (error) throw error;
+  const { data, error } = await supabase.rpc('set_my_job_capacity', {
+    p_capacity: capacity,
+  });
+  if (error) throw new Error(error.message || 'Could not save work style');
+  return (data as string) === 'standalone' ? 'standalone' : 'multi';
 }
 
 export type TechW9Status = {
@@ -232,7 +260,7 @@ export async function fetchTechYearToDateCompensation(year = new Date().getFullY
 export async function claimBookingRow(referenceCode: string, mechanicId: string) {
   const { data: detail } = await supabase
     .from('mechanic_details')
-    .select('job_capacity, w9_completed_at, contractor_agreement_signed_at')
+    .select('job_capacity, w9_completed_at, contractor_agreement_signed_at, contractor_agreement_signature_path')
     .eq('profile_id', mechanicId)
     .maybeSingle();
 
@@ -242,9 +270,9 @@ export async function claimBookingRow(referenceCode: string, mechanicId: string)
     );
   }
 
-  if (!detail?.contractor_agreement_signed_at) {
+  if (!detail?.contractor_agreement_signed_at || !detail?.contractor_agreement_signature_path) {
     throw new Error(
-      'Accept the Independent Contractor Agreement in Settings before claiming your first job.'
+      'Digitally sign the Independent Contractor Agreement on the website (Settings → Sign agreement) before claiming your first job.'
     );
   }
 

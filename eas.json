@@ -25,6 +25,16 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "serviceAccountKeyPath": "./google-play-service-account.json",
+        "track": "internal",
+        "releaseStatus": "draft"
+      },
+      "ios": {
+        "appleTeamId": "68QFVQ738K",
+        "ascAppId": "6794738487"
+      }
+    }
   }
 }

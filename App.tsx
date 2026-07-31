@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, SafeAreaView, StatusBar, StyleSheet,
+  View, Text, TouchableOpacity, SafeAreaView, StatusBar, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { JobsScreen } from './src/screens/JobsScreen';
 import { EarningsScreen } from './src/screens/EarningsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { registerDevicePushToken } from './src/lib/pushNotifications';
+import { supabase } from './src/lib/supabase';
 
 const colors = {
   bg: { primary: '#090a0f', card: '#12141c' },
@@ -25,13 +26,47 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
 ];
 
 export default function App() {
+  const [authReady, setAuthReady] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('jobs');
+
+  useEffect(() => {
+    let mounted = true;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setIsAuthenticated(Boolean(data.session?.user));
+      setAuthReady(true);
+      if (data.session?.user) void registerDevicePushToken('tech');
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(Boolean(session?.user));
+      setAuthReady(true);
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
 
   const handleLogin = () => {
     setIsAuthenticated(true);
     void registerDevicePushToken('tech');
   };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setIsAuthenticated(false);
+    setActiveTab('jobs');
+  };
+
+  if (!authReady) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centered]}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.bg.primary} />
+        <ActivityIndicator color={colors.brand.orange} />
+      </SafeAreaView>
+    );
+  }
 
   // Show login screen when not authenticated
   if (!isAuthenticated) {
@@ -64,7 +99,7 @@ export default function App() {
       <View style={styles.screenContainer}>
         {activeTab === 'jobs' && <JobsScreen />}
         {activeTab === 'earnings' && <EarningsScreen />}
-        {activeTab === 'settings' && <SettingsScreen onLogout={() => setIsAuthenticated(false)} />}
+        {activeTab === 'settings' && <SettingsScreen onLogout={() => void handleLogout()} />}
       </View>
 
       {/* Bottom Tab Bar */}
@@ -92,6 +127,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg.primary,
+  },
+  centered: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     backgroundColor: colors.bg.card,

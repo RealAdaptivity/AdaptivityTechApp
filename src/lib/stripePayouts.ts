@@ -1,6 +1,7 @@
-import { supabase } from '../lib/supabase';
+import { supabase, hasMechanicDetails } from '../lib/supabase';
 import { techStripeReturnUrls } from '../config/siteLinks';
 import { invokeEdgeFunction } from './edgeFunctionErrors';
+import { errorMessage } from './errorMessage';
 
 export type TechPayoutRow = {
   id: string;
@@ -84,7 +85,11 @@ export async function ensureTechProfile(vanNumber?: string) {
     p_van_number: vanNumber?.trim() || 'Mobile Unit',
     p_role_title: 'ASE Technician',
   });
-  if (error) throw error;
+  if (error) {
+    // Soft-ok if profile row already exists (same as login gate).
+    if (await hasMechanicDetails()) return;
+    throw new Error(error.message || 'Could not register technician profile');
+  }
 }
 
 async function clearMyStripeConnectAccountId(): Promise<void> {
@@ -160,16 +165,16 @@ export async function openStripePayoutSetup(): Promise<TechConnectStatus & { onb
       urls
     );
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = errorMessage(e, String(e));
     if (/no such account|resource_missing|similar object exists in test mode|technician profile required/i.test(msg)) {
-      if (/technician profile required/i.test(msg)) throw e;
+      if (/technician profile required/i.test(msg)) throw new Error(msg);
       await clearMyStripeConnectAccountId();
       data = await invokeEdgeFunction<TechConnectStatus & { onboardingUrl: string }>(
         'create-stripe-account-link',
         { ...urls, forceRecreate: true }
       );
     } else {
-      throw e;
+      throw e instanceof Error ? e : new Error(msg);
     }
   }
 
