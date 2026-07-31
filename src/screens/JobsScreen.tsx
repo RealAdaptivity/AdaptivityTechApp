@@ -465,6 +465,8 @@ export const JobsScreen: React.FC = () => {
         referenceCode: activeJob.referenceCode,
         amountDollars: amount,
         kind: 'charge',
+        lines: lineItems,
+        diagnosticDollars: holdDollars,
       });
       Alert.alert(
         'Charged',
@@ -762,9 +764,53 @@ export const JobsScreen: React.FC = () => {
                 onChangeText={setTechNotes}
               />
               <Text style={styles.hint}>
-                Total ≈ ${chargeTotal.toFixed(2)} ($
-                {holdDollars.toFixed(0)} diagnostic + ${repairsSubtotal.toFixed(2)} repairs)
+                Fill lines above, then review the itemized charge with the customer.
               </Text>
+
+              <View style={styles.receiptPreview}>
+                <Text style={styles.receiptTitle}>Itemized charge (show customer)</Text>
+                <View style={styles.receiptRow}>
+                  <Text style={styles.receiptLabel}>Mobile diagnostic visit</Text>
+                  <Text style={styles.receiptAmt}>${holdDollars.toFixed(2)}</Text>
+                </View>
+                {lines
+                  .map((l) => {
+                    const labor = Number(l.laborDollars) || 0;
+                    const parts = Number(l.partsDollars) || 0;
+                    const title = l.title.trim();
+                    if (!title || labor + parts <= 0) return null;
+                    return { title, labor, parts, total: labor + parts };
+                  })
+                  .filter(Boolean)
+                  .map((row, i) =>
+                    row ? (
+                      <View key={i} style={{ marginBottom: 6 }}>
+                        <View style={styles.receiptRow}>
+                          <Text style={styles.receiptLabel}>{row.title}</Text>
+                          <Text style={styles.receiptAmt}>${row.total.toFixed(2)}</Text>
+                        </View>
+                        <Text style={styles.receiptSub}>
+                          Labor ${row.labor.toFixed(2)}
+                          {row.parts > 0 ? ` · Parts $${row.parts.toFixed(2)}` : ''}
+                        </Text>
+                      </View>
+                    ) : null
+                  )}
+                {repairsSubtotal <= 0 && (
+                  <Text style={styles.receiptWarn}>
+                    Add repair lines, or use Diagnostic only / No-show.
+                  </Text>
+                )}
+                <View style={[styles.receiptRow, styles.receiptTotalRow]}>
+                  <Text style={styles.receiptTotalLabel}>Total to charge</Text>
+                  <Text style={styles.receiptTotalAmt}>${chargeTotal.toFixed(2)}</Text>
+                </View>
+                <Text style={styles.receiptSub}>
+                  Includes ${holdDollars.toFixed(0)} diagnostic
+                  {repairsSubtotal > 0 ? ` + $${repairsSubtotal.toFixed(2)} repairs` : ''}
+                </Text>
+              </View>
+
               <TouchableOpacity
                 style={styles.agreeRow}
                 onPress={() => setCustomerAgreed((v) => !v)}
@@ -1041,6 +1087,34 @@ const styles = StyleSheet.create({
   row2: { flexDirection: 'row', gap: 8 },
   half: { flex: 1 },
   addLine: { color: colors.brand.orange, fontWeight: '800', fontSize: 12 },
+  receiptPreview: {
+    borderWidth: 1,
+    borderColor: 'rgba(16,185,129,0.35)',
+    backgroundColor: 'rgba(16,185,129,0.08)',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    gap: 6,
+  },
+  receiptTitle: {
+    color: '#6ee7b7',
+    fontWeight: '800',
+    fontSize: 11,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  receiptRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  receiptLabel: { flex: 1, color: colors.text.secondary, fontSize: 12 },
+  receiptAmt: { color: colors.text.primary, fontFamily: 'monospace', fontSize: 12, fontWeight: '700' },
+  receiptSub: { color: colors.text.muted, fontSize: 10, marginTop: 2 },
+  receiptWarn: { color: '#fcd34d', fontSize: 10, lineHeight: 14 },
+  receiptTotalRow: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border.primary,
+    paddingTop: 8,
+    marginTop: 4,
+  },
+  receiptTotalLabel: { color: colors.text.primary, fontWeight: '800', fontSize: 13 },
+  receiptTotalAmt: { color: colors.text.primary, fontFamily: 'monospace', fontSize: 13, fontWeight: '800' },
   chatBox: {
     borderWidth: 1,
     borderColor: colors.border.primary,
