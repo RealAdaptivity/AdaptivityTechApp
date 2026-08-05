@@ -151,6 +151,20 @@ export const JobsScreen: React.FC = () => {
   }, [jobs, activeJob]);
 
   useEffect(() => {
+    if (activeJob || !mechanicId) return;
+    const assigned = jobs.find(
+      (job) =>
+        job.mechanicId === mechanicId &&
+        (job.status === 'EN_ROUTE' || job.status === 'ON_SITE') &&
+        job.paymentStatus !== 'captured'
+    );
+    if (!assigned) return;
+    setActiveJob(assigned);
+    setFilter('active');
+    setJobPhase(assigned.status === 'ON_SITE' ? 'on_site' : 'en_route');
+  }, [jobs, mechanicId, activeJob]);
+
+  useEffect(() => {
     if (!activeJob || jobPhase === 'complete') return;
     void pushTechGpsToBooking(activeJob.referenceCode);
     const id = setInterval(() => {
@@ -267,7 +281,7 @@ export const JobsScreen: React.FC = () => {
           <Text style={styles.scheduleText}>Preferred: {j.preferredDate}</Text>
         ) : null}
         {j.quoteStatus === 'awaiting_diagnostic' && (
-          <Text style={styles.diagBadge}>$100 HOLD — tech sets price on site</Text>
+          <Text style={styles.diagBadge}>$85 HOLD — tech sets price on site</Text>
         )}
         <Text style={styles.vehicleText}>{j.vehicle}</Text>
         <Text style={styles.addressText}>{j.address}</Text>
@@ -289,7 +303,7 @@ export const JobsScreen: React.FC = () => {
           ))}
         </View>
         <View style={styles.jobFooter}>
-          <Text style={styles.payoutText}>Hold: $100</Text>
+          <Text style={styles.payoutText}>Hold: $85</Text>
           <TouchableOpacity style={styles.navBtn} onPress={() => openNavigate(j.address)}>
             <Text style={styles.claimBtnText}>Navigate</Text>
           </TouchableOpacity>
@@ -413,7 +427,7 @@ export const JobsScreen: React.FC = () => {
     await loadJobs();
   };
 
-  const holdDollars = (activeJob?.holdAmountCents ?? 10000) / 100;
+  const holdDollars = (activeJob?.holdAmountCents ?? 8500) / 100;
   const repairsSubtotal = lines.reduce(
     (s, l) => s + (Number(l.laborDollars) || 0) + (Number(l.partsDollars) || 0),
     0
@@ -483,10 +497,10 @@ export const JobsScreen: React.FC = () => {
 
   const handleDiagnosticOnly = async () => {
     if (!activeJob) return;
-    Alert.alert('Diagnostic only?', 'Charge the $100 visit and close with no repairs.', [
+    Alert.alert('Diagnostic only?', `Charge the $${holdDollars.toFixed(2)} visit and close with no repairs.`, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Charge $100',
+        text: `Charge $${holdDollars.toFixed(0)}`,
         onPress: async () => {
           setBusy(true);
           try {
@@ -520,10 +534,10 @@ export const JobsScreen: React.FC = () => {
 
   const handleNoShow = async () => {
     if (!activeJob) return;
-    Alert.alert('No-show?', 'Capture the $100 diagnostic hold and close the job.', [
+    Alert.alert('No-show?', `Capture the $${holdDollars.toFixed(2)} diagnostic hold and close the job.`, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Capture $100',
+        text: `Capture $${holdDollars.toFixed(0)}`,
         style: 'destructive',
         onPress: async () => {
           setBusy(true);
@@ -822,8 +836,8 @@ export const JobsScreen: React.FC = () => {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.completeBtn, (busy || !customerAgreed) && { opacity: 0.6 }]}
-                disabled={busy || !customerAgreed}
+                style={[styles.completeBtn, busy && { opacity: 0.6 }]}
+                disabled={busy}
                 onPress={() => void handleCharge()}
               >
                 <Text style={styles.claimBtnText}>
@@ -835,14 +849,14 @@ export const JobsScreen: React.FC = () => {
                 disabled={busy}
                 onPress={() => void handleDiagnosticOnly()}
               >
-                <Text style={styles.claimBtnText}>Diagnostic only ($100)</Text>
+                <Text style={styles.claimBtnText}>Diagnostic only (${holdDollars.toFixed(0)})</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.noShowBtn, busy && { opacity: 0.6 }]}
                 disabled={busy}
                 onPress={() => void handleNoShow()}
               >
-                <Text style={styles.claimBtnText}>No-show — capture $100</Text>
+                <Text style={styles.claimBtnText}>No-show — capture ${holdDollars.toFixed(0)}</Text>
               </TouchableOpacity>
             </View>
           )}
