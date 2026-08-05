@@ -284,6 +284,7 @@ export const JobsScreen: React.FC = () => {
           <Text style={styles.diagBadge}>$85 HOLD — tech sets price on site</Text>
         )}
         <Text style={styles.vehicleText}>{j.vehicle}</Text>
+        <Text style={styles.addressLabel}>Customer address</Text>
         <Text style={styles.addressText}>{j.address}</Text>
         {match.chips.length > 0 && (
           <View style={styles.chipRow}>
@@ -632,6 +633,7 @@ export const JobsScreen: React.FC = () => {
                 <Text style={styles.refCode}>{p.referenceCode}</Text>
                 <Text style={styles.customerName}>{p.customer}</Text>
                 <Text style={styles.vehicleText}>{p.vehicle}</Text>
+                <Text style={styles.addressLabel}>Customer address</Text>
                 <Text style={styles.addressText}>{p.address}</Text>
                 <Text style={styles.customerPhone}>{p.phone}</Text>
                 {p.services.map((s) => (
@@ -648,6 +650,7 @@ export const JobsScreen: React.FC = () => {
         <View style={styles.jobCard}>
           <Text style={styles.activeTitle}>Active Dispatch: {job.referenceCode}</Text>
           <Text style={styles.customerName}>{job.customer}</Text>
+        <Text style={styles.addressLabel}>Customer address</Text>
           <Text style={styles.addressText}>{job.address}</Text>
           <TouchableOpacity style={styles.navBtn} onPress={() => openNavigate(job.address)}>
             <Text style={styles.claimBtnText}>Navigate</Text>
@@ -1010,6 +1013,14 @@ const styles = StyleSheet.create({
   refCode: { color: colors.brand.orange, fontWeight: '800', fontSize: 12, marginBottom: 4 },
   diagBadge: { color: '#7dd3fc', fontWeight: '800', fontSize: 10, marginBottom: 6 },
   vehicleText: { color: colors.text.secondary, fontSize: 13, marginBottom: 4 },
+  addressLabel: {
+    color: colors.text.muted,
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    marginBottom: 2,
+    letterSpacing: 0.4,
+  },
   addressText: { color: colors.text.muted, fontSize: 12, marginBottom: spacing.sm },
   servicesList: { marginBottom: spacing.sm },
   serviceItem: { color: colors.text.secondary, fontSize: 11 },
