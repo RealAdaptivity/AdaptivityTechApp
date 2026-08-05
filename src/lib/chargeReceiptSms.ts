@@ -34,7 +34,7 @@ export function buildChargeReceiptMessage(opts: {
   const parts: string[] = [
     `Hi ${first}, your Adaptivity service is complete for job ${opts.referenceCode}.`,
   ];
-  const diag = opts.diagnosticDollars ?? 100;
+  const diag = opts.diagnosticDollars ?? 85;
   const itemLines: string[] = [`• Mobile diagnostic: $${diag.toFixed(2)}`];
   for (const line of opts.lines || []) {
     const title = line.title.trim();
