@@ -27,6 +27,8 @@ export type CloseOutOptions = {
   signaturePath?: string;
   signerName?: string;
   techNotes?: string;
+  /** How a tech-confirmed payment was made. Card is set by the server. */
+  paymentMethod?: 'cash' | 'zelle';
 };
 
 export type RecordedPayment = { totalCents: number; taxCents: number; techPayoutCents: number };
@@ -47,10 +49,11 @@ export function closeOutPayload(closeOut: CloseOut, opts: CloseOutOptions) {
     signature_path: opts.signaturePath ?? null,
     signer_name: opts.signerName ?? null,
     tech_notes: opts.techNotes ?? null,
+    ...(opts.paymentMethod ? { payment_method: opts.paymentMethod } : {}),
   };
 }
 
-/** Paid in cash or on the Square app: the tech confirms, the database records. */
+/** Paid by Zelle or in cash: the tech confirms, the database records. */
 export async function recordJobPayment(
   bookingId: string,
   closeOut: CloseOut,
