@@ -45,6 +45,10 @@ export type DispatchBooking = {
   mechanicId: string | null;
   /** 'shop' is a drop-off at a partner shop, where travel doesn't apply. */
   locationType: 'mobile' | 'shop';
+  customerEmail: string | null;
+  /** The customer's own words about the problem, from the booking form. */
+  issueDescription: string | null;
+  vin: string | null;
 };
 
 function mapRow(row: Record<string, unknown>): DispatchBooking {
@@ -69,6 +73,9 @@ function mapRow(row: Record<string, unknown>): DispatchBooking {
     customerNotes: (row.customer_notes as string | null) ?? null,
     mechanicId: (row.mechanic_id as string | null) ?? null,
     locationType: row.location_type === 'shop' ? 'shop' : 'mobile',
+    customerEmail: (row.customer_email as string | null) ?? null,
+    issueDescription: (row.issue_description as string | null) ?? null,
+    vin: (row.vin as string | null) ?? null,
   };
 }
 
@@ -251,40 +258,6 @@ export async function updateBookingRow(
     .update(patch)
     .ilike('reference_code', referenceCode.trim());
   if (error) throw error;
-}
-
-export type QuoteLineInput = {
-  title: string;
-  laborDollars: number;
-  partsDollars?: number;
-};
-
-/** Money is taken at the vehicle on Square, so the app records what was
- *  collected rather than moving it. Same write as the web portal. */
-export async function recordInPersonPayment(
-  referenceCode: string,
-  opts?: {
-    lineItems?: QuoteLineInput[];
-    salesTaxDollars?: number;
-    totalCollectedDollars?: number;
-  }
-) {
-  const total =
-    opts?.totalCollectedDollars ??
-    (opts?.lineItems ?? []).reduce((sum, li) => sum + (li.laborDollars || 0) + (li.partsDollars || 0), 0) +
-      (opts?.salesTaxDollars ?? 0);
-
-  const { error } = await supabase
-    .from('bookings')
-    .update({
-      status: 'COMPLETED',
-      payment_status: 'paid_in_person',
-      total_estimate: total,
-      updated_at: new Date().toISOString(),
-    })
-    .ilike('reference_code', referenceCode.trim());
-  if (error) throw error;
-  return { ok: true, collectedDollars: total };
 }
 
 /** Release a claimed job back to the open pool. Nothing to void — no card was held. */
