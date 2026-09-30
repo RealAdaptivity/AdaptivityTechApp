@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -31,7 +32,14 @@ import {
   type CloseOutOptions,
   type ReceiptSendResult,
 } from '../lib/jobPayments';
-import { phoneTapToPayOffered, takeCardPayment, tapToPayAvailability } from '../lib/squareTapToPay';
+import {
+  iphoneTapToPayStatus,
+  phoneTapToPayOffered,
+  takeCardPayment,
+  tapToPayAvailability,
+  TapToPayNotLinkedError,
+} from '../lib/squareTapToPay';
+import { TapToPaySetupModal } from './TapToPaySetupModal';
 import { SheetModal } from './SheetModal';
 import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
 
@@ -82,6 +90,13 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
   }, [visible]);
 
   const card = tapToPayAvailability();
+  const [tapToPaySetupOpen, setTapToPaySetupOpen] = useState(false);
+  const cardLabel =
+    Platform.OS === 'ios' && phoneTapToPayOffered()
+      ? 'Tap to Pay on iPhone'
+      : phoneTapToPayOffered()
+        ? 'Tap to Pay'
+        : 'Charge card (Square reader)';
   const repairsEntered = lines.some((l) => l.labor.trim() || l.parts.trim());
   const collectDiag =
     mode === 'diagnostic_only' || diagChoice === 'collect' || (diagChoice === 'auto' && !repairsEntered);
@@ -118,12 +133,24 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
   };
 
   const payByCard = async () => {
-    if (problem || busy) return;
+    if (busy) return;
+    // Apple: the Tap to Pay button is never greyed out (5.3). Say what is
+    // missing instead.
+    if (problem) {
+      Alert.alert('Before taking payment', problem);
+      return;
+    }
     setBusy('card');
     setError(null);
     try {
       let current = charged;
       if (!current) {
+        // Not set up on this iPhone yet: go straight to setup (3.7, 5.3)
+        // before the signature is saved or anything is charged.
+        if (Platform.OS === 'ios' && phoneTapToPayOffered()) {
+          const status = await iphoneTapToPayStatus();
+          if (status.state === 'not_linked') throw new TapToPayNotLinkedError();
+        }
         const signaturePath = await saveSignature();
         const result = await takeCardPayment({
           amountCents: closeOut.totalCents,
@@ -137,6 +164,10 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
       setClosed({ totalCents: saved.totalCents, payoutCents: saved.techPayoutCents, byCard: true });
       onClosed();
     } catch (e) {
+      if (e instanceof TapToPayNotLinkedError) {
+        setTapToPaySetupOpen(true);
+        return;
+      }
       setError(e instanceof Error ? e.message : 'The card payment did not go through.');
     } finally {
       setBusy(null);
@@ -397,15 +428,15 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
           {!!error && <Text style={styles.error}>{error}</Text>}
 
           <TouchableOpacity
-            style={[styles.cardBtn, (!!problem || busy !== null || !card.available) && styles.dim]}
-            disabled={!!problem || busy !== null || !card.available}
+            style={[styles.cardBtn, !card.available && styles.dim]}
+            disabled={busy !== null || !card.available}
             onPress={() => void payByCard()}
           >
             {busy === 'card' ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.cardBtnText}>
-                {charged ? 'Finish closing the job (card already charged)' : `💳 ${phoneTapToPayOffered() ? 'Tap to Pay' : 'Charge card (Square reader)'} · ${formatCents(closeOut.totalCents)}`}
+                {charged ? 'Finish closing the job (card already charged)' : `${cardLabel} · ${formatCents(closeOut.totalCents)}`}
               </Text>
             )}
           </TouchableOpacity>
@@ -429,6 +460,7 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
           </Text>
         </ScrollView>
       )}
+      <TapToPaySetupModal visible={tapToPaySetupOpen} onClose={() => setTapToPaySetupOpen(false)} />
     </SheetModal>
   );
 };

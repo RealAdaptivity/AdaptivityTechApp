@@ -108,24 +108,131 @@ export async function squareLocationName(): Promise<string | null> {
   }
 }
 
-/**
- * iPhone only: Apple requires the Square account to accept Tap to Pay on
- * iPhone terms once per device (Apple shows the screen). Android needs no
- * step — the SDK offers Tap to Pay when the phone supports it.
- */
-export async function prepareTapToPayOnIphone(): Promise<void> {
-  if (Platform.OS !== 'ios' || !tapToPayOnIphoneEnabled()) return;
+// ── Tap to Pay on iPhone ────────────────────────────────────────────────────
+// Apple's review checklist drives what is here: the merchant's acceptance of
+// the Tap to Pay on iPhone terms is read from Apple every time rather than
+// stored (1.6), only an admin may accept them (3.8), the reader is warmed up
+// at launch and on foreground (1.5), and setup shows its progress (3.9.1).
+
+/** Apple asks apps to tell people on older iOS to update (1.4). */
+export const TAP_TO_PAY_MIN_IOS = 17.6;
+
+export function iosVersionTooOld(): boolean {
+  if (Platform.OS !== 'ios') return false;
+  const v = parseFloat(String(Platform.Version));
+  return Number.isFinite(v) && v < TAP_TO_PAY_MIN_IOS;
+}
+
+export type IphoneTapToPayStatus =
+  | { state: 'off' }
+  | { state: 'unsupported'; reason: string }
+  | { state: 'not_linked' }
+  | { state: 'linked' };
+
+/** Where this iPhone stands with Tap to Pay, straight from Apple / Square. */
+export async function iphoneTapToPayStatus(): Promise<IphoneTapToPayStatus> {
+  if (Platform.OS !== 'ios' || !tapToPayOnIphoneEnabled() || !tapToPayAvailability().available) {
+    return { state: 'off' };
+  }
+  if (iosVersionTooOld()) {
+    return {
+      state: 'unsupported',
+      reason: `Update this iPhone to iOS ${TAP_TO_PAY_MIN_IOS} or later to use Tap to Pay on iPhone.`,
+    };
+  }
   const s = requireSdk();
   const capable = await s.TapToPaySettings.isDeviceCapable().catch(() => false);
   if (!capable) {
-    throw new Error('This iPhone does not support Tap to Pay (iPhone XS or newer on a current iOS is needed).');
+    return { state: 'unsupported', reason: 'Tap to Pay on iPhone needs an iPhone XS or later.' };
   }
+  await ensureSquareAuthorized();
   const linked = await s.TapToPaySettings.isAppleAccountLinked().catch(() => false);
-  if (linked) return;
+  return { state: linked ? 'linked' : 'not_linked' };
+}
+
+/** Show Apple's Tap to Pay on iPhone Terms and Conditions and link this
+ *  iPhone. Only call for an admin, or once an admin has accepted (3.8). */
+export async function acceptTapToPayTerms(): Promise<void> {
+  const s = requireSdk();
+  await ensureSquareAuthorized();
   try {
     await s.TapToPaySettings.linkAppleAccount();
   } catch (e) {
     throw new Error(sdkErrorMessage(e, 'Tap to Pay on iPhone was not set up.'));
+  }
+}
+
+export type TapToPayReaderState = { ready: boolean; label: string; percent: number | null };
+
+function describeReader(reader: unknown): TapToPayReaderState {
+  const r = (reader ?? {}) as {
+    status?: { status?: unknown };
+    firmwareInfo?: { updatePercentage?: unknown } | null;
+  };
+  const status = String(r.status?.status ?? '');
+  const pct = Number(r.firmwareInfo?.updatePercentage);
+  const percent = Number.isFinite(pct) && pct > 0 && pct < 100 ? Math.round(pct) : null;
+  if (status === 'READY') return { ready: true, label: 'Tap to Pay on iPhone is ready.', percent: null };
+  if (status === 'CONNECTING_TO_DEVICE' || status === 'CONNECTING_TO_SQUARE') {
+    return { ready: false, label: 'Preparing Tap to Pay on iPhone…', percent };
+  }
+  if (status === 'READER_UNAVAILABLE' || status === 'FAULTY') {
+    return { ready: false, label: 'Tap to Pay on iPhone isn’t ready yet. Keep the app open and connected.', percent };
+  }
+  return { ready: false, label: 'Preparing Tap to Pay on iPhone…', percent };
+}
+
+/** Follow the Tap to Pay reader while it is being configured (3.9.1).
+ *  Returns an unsubscribe function. */
+export function watchTapToPayReader(onChange: (state: TapToPayReaderState) => void): () => void {
+  const s = loadSdk();
+  if (!s) return () => undefined;
+  const isTapToPay = (r: unknown) => String((r as { model?: unknown })?.model ?? '') === 'TAP_TO_PAY';
+  const refresh = () => {
+    void s
+      .getReaders()
+      .then((readers) => {
+        const reader = (readers ?? []).find(isTapToPay);
+        onChange(reader ? describeReader(reader) : { ready: false, label: 'Preparing Tap to Pay on iPhone…', percent: null });
+      })
+      .catch(() => undefined);
+  };
+  refresh();
+  let stop: () => void = () => undefined;
+  try {
+    stop = s.setReaderChangedCallback((event) => {
+      if (isTapToPay(event?.reader)) onChange(describeReader(event.reader));
+      else refresh();
+    });
+  } catch {
+    /* older SDK builds: polling below still updates the screen */
+  }
+  const timer = setInterval(refresh, 2000);
+  return () => {
+    clearInterval(timer);
+    stop();
+  };
+}
+
+/** Get Tap to Pay ready before it is needed, so checkout starts fast (1.5).
+ *  Quietly does nothing when this iPhone is not set up for it. */
+export async function warmUpTapToPay(): Promise<void> {
+  try {
+    const status = await iphoneTapToPayStatus();
+    if (status.state !== 'linked') return;
+    const s = requireSdk();
+    await s.getReaders();
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Thrown when an iPhone payment needs Tap to Pay set up first; checkout
+ *  opens the setup flow instead of failing (3.7, 5.3). */
+export class TapToPayNotLinkedError extends Error {
+  constructor() {
+    super('Set up Tap to Pay on iPhone first.');
+    this.name = 'TapToPayNotLinkedError';
   }
 }
 
@@ -163,7 +270,13 @@ export async function takeCardPayment(opts: {
     throw new Error('Enter what the customer is paying.');
   }
   await ensureSquareAuthorized();
-  await prepareTapToPayOnIphone();
+  let offerPhoneTap = Platform.OS === 'android';
+  if (Platform.OS === 'ios' && tapToPayOnIphoneEnabled()) {
+    const status = await iphoneTapToPayStatus();
+    if (status.state === 'not_linked') throw new TapToPayNotLinkedError();
+    // Unsupported iPhone: take the card on a paired reader instead.
+    offerPhoneTap = status.state === 'linked';
+  }
 
   try {
     const payment = await s.startPayment(
@@ -178,14 +291,18 @@ export async function takeCardPayment(opts: {
       },
       {
         mode: s.PromptMode.DEFAULT,
-        // Without the iPhone entitlement, offer paired readers only.
-        additionalMethods: phoneTapToPayOffered() ? [s.AdditionalPaymentMethodType.TAP_TO_PAY] : [],
+        // Without Tap to Pay on this phone, offer paired readers only.
+        additionalMethods: offerPhoneTap ? [s.AdditionalPaymentMethodType.TAP_TO_PAY] : [],
       }
     );
     const id = String(payment?.id ?? '').trim();
     if (!id) throw new Error('Square did not return a payment id.');
     return { paymentId: id, amountCents: Number(payment.amountMoney?.amount ?? opts.amountCents) };
   } catch (e) {
-    throw new Error(sdkErrorMessage(e, 'The card payment did not go through.'));
+    const msg = sdkErrorMessage(e, 'The card payment did not go through.');
+    if (/osVersionNotSupported|OS_VERSION|os version/i.test(msg)) {
+      throw new Error(`Update this iPhone to iOS ${TAP_TO_PAY_MIN_IOS} or later to use Tap to Pay on iPhone.`);
+    }
+    throw new Error(msg);
   }
 }

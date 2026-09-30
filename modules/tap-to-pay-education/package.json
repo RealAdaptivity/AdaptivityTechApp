@@ -1,0 +1,8 @@
+{
+  "name": "tap-to-pay-education",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Presents Apple's Tap to Pay on iPhone education (ProximityReaderDiscovery).",
+  "main": "index.ts",
+  "license": "UNLICENSED"
+}
