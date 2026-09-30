@@ -37,6 +37,20 @@ export function squareApplicationId(): string {
   return extra.squareApplicationId?.trim() || '';
 }
 
+/** Whether this build carries Apple's Tap to Pay on iPhone entitlement. Off
+ *  until Apple approves it for distribution; iPhones then take cards with a
+ *  paired Square reader instead. Android needs no entitlement. */
+export function tapToPayOnIphoneEnabled(): boolean {
+  const extra = (Constants.expoConfig?.extra ?? {}) as { squareTapToPayOnIphone?: boolean };
+  return extra.squareTapToPayOnIphone === true;
+}
+
+/** Tap to Pay on the phone itself: always offered on Android, on iPhone only
+ *  when the build has the entitlement. */
+export function phoneTapToPayOffered(): boolean {
+  return Platform.OS === 'android' || (Platform.OS === 'ios' && tapToPayOnIphoneEnabled());
+}
+
 export type TapToPayAvailability =
   | { available: true }
   | { available: false; reason: string };
@@ -100,7 +114,7 @@ export async function squareLocationName(): Promise<string | null> {
  * step — the SDK offers Tap to Pay when the phone supports it.
  */
 export async function prepareTapToPayOnIphone(): Promise<void> {
-  if (Platform.OS !== 'ios') return;
+  if (Platform.OS !== 'ios' || !tapToPayOnIphoneEnabled()) return;
   const s = requireSdk();
   const capable = await s.TapToPaySettings.isDeviceCapable().catch(() => false);
   if (!capable) {
@@ -164,7 +178,8 @@ export async function takeCardPayment(opts: {
       },
       {
         mode: s.PromptMode.DEFAULT,
-        additionalMethods: [s.AdditionalPaymentMethodType.TAP_TO_PAY],
+        // Without the iPhone entitlement, offer paired readers only.
+        additionalMethods: phoneTapToPayOffered() ? [s.AdditionalPaymentMethodType.TAP_TO_PAY] : [],
       }
     );
     const id = String(payment?.id ?? '').trim();

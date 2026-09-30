@@ -31,7 +31,7 @@ import {
   type CloseOutOptions,
   type ReceiptSendResult,
 } from '../lib/jobPayments';
-import { takeCardPayment, tapToPayAvailability } from '../lib/squareTapToPay';
+import { phoneTapToPayOffered, takeCardPayment, tapToPayAvailability } from '../lib/squareTapToPay';
 import { SheetModal } from './SheetModal';
 import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
 
@@ -405,7 +405,7 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.cardBtnText}>
-                {charged ? 'Finish closing the job (card already charged)' : `💳 Tap to Pay · ${formatCents(closeOut.totalCents)}`}
+                {charged ? 'Finish closing the job (card already charged)' : `💳 ${phoneTapToPayOffered() ? 'Tap to Pay' : 'Charge card (Square reader)'} · ${formatCents(closeOut.totalCents)}`}
               </Text>
             )}
           </TouchableOpacity>
