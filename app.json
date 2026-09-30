@@ -2,7 +2,6 @@
   "expo": {
     "name": "Adaptivity Tech Dispatch",
     "slug": "adaptivity-tech-dispatch",
-    "owner": "adaptivityperformance",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -18,7 +17,11 @@
         "NSCameraUsageDescription": "Adaptivity uses the camera to capture brake pad, tire tread, and engine photos for Digital Vehicle Inspection (DVI) reports.",
         "NSLocationWhenInUseUsageDescription": "Adaptivity uses location to calculate mobile dispatch distance and display live van tracking.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Adaptivity uses continuous location to track mobile van dispatch progress while en route.",
-        "UIBackgroundModes": ["location", "fetch", "remote-notification"],
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification"
+        ],
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -39,11 +42,6 @@
           "backgroundColor": "#090a0f"
         }
       ]
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "d8f15ced-5ae8-40bc-aabc-61de0496aeb8"
-      }
-    }
+    ]
   }
 }
