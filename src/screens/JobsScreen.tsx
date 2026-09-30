@@ -39,12 +39,12 @@ import {
   syncOfflineJobPackets,
   type OfflineJobPacket,
 } from '../lib/offlineJobPacket';
-import { fetchJobMessages, sendJobMessage, subscribeJobMessages, type JobMessage } from '../lib/jobChat';
 import { clockIn, clockOut, fetchMyShiftStatus, shiftElapsedLabel, type ShiftStatus } from '../lib/techShifts';
 import { DIAGNOSTIC_FEE_DOLLARS } from '../lib/pricing';
 import { computeCloseOut } from '../lib/closeOut';
 import { recordJobPayment } from '../lib/jobPayments';
 import { GetPaidScreen } from '../components/GetPaidScreen';
+import { MessageIcon, NavigateIcon, PhoneIcon } from '../components/ContactIcons';
 
 type JobPhase = 'en_route' | 'on_site' | 'complete';
 type JobsFilter = 'today' | 'available' | 'active' | 'completed';
@@ -115,9 +115,6 @@ export const JobsScreen: React.FC = () => {
   const [claims, setClaims] = useState<PartsExpenseClaim[]>([]);
   const [offlinePackets, setOfflinePackets] = useState<OfflineJobPacket[]>([]);
   const [loadError, setLoadError] = useState(false);
-  const [chatMessages, setChatMessages] = useState<JobMessage[]>([]);
-  const [chatDraft, setChatDraft] = useState('');
-  const [chatBusy, setChatBusy] = useState(false);
 
   const loadShift = useCallback(async () => {
     try {
@@ -201,25 +198,6 @@ export const JobsScreen: React.FC = () => {
     return () => clearInterval(id);
   }, [activeJob, jobPhase]);
 
-  useEffect(() => {
-    if (!activeJob?.id || jobPhase === 'complete') {
-      setChatMessages([]);
-      return;
-    }
-    const loadChat = async () => {
-      try {
-        setChatMessages(await fetchJobMessages(activeJob.id));
-      } catch {
-        /* chat table may be missing */
-      }
-    };
-    void loadChat();
-    const channel = subscribeJobMessages(activeJob.id, () => void loadChat());
-    return () => {
-      void channel.unsubscribe();
-    };
-  }, [activeJob?.id, jobPhase]);
-
   const handleClock = async () => {
     setShiftBusy(true);
     setMessage(null);
@@ -236,20 +214,6 @@ export const JobsScreen: React.FC = () => {
       setMessage(e instanceof Error ? e.message : 'Could not update your shift');
     } finally {
       setShiftBusy(false);
-    }
-  };
-
-  const handleSendChat = async () => {
-    if (!activeJob?.id || !chatDraft.trim()) return;
-    setChatBusy(true);
-    try {
-      await sendJobMessage(activeJob.id, chatDraft);
-      setChatDraft('');
-      setChatMessages(await fetchJobMessages(activeJob.id));
-    } catch (e: unknown) {
-      Alert.alert('Chat', e instanceof Error ? e.message : 'Could not send');
-    } finally {
-      setChatBusy(false);
     }
   };
 
@@ -447,23 +411,9 @@ export const JobsScreen: React.FC = () => {
 
   const renderContactRow = (job: DispatchBooking, smsBody: string) => (
     <View style={styles.actionRow}>
-      <TouchableOpacity
-        style={[styles.actionBtn, styles.callBtn, !job.phone && styles.dim]}
-        disabled={!job.phone}
-        onPress={() => callCustomer(job.phone)}
-      >
-        <Text style={styles.btnText}>📞 Call</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.actionBtn, styles.textBtn, !job.phone && styles.dim]}
-        disabled={!job.phone}
-        onPress={() => textCustomer(job.phone, smsBody)}
-      >
-        <Text style={styles.btnText}>💬 Text</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={[styles.actionBtn, styles.navBtn]} onPress={() => openNavigate(job.address)}>
-        <Text style={styles.btnText}>🧭 Navigate</Text>
-      </TouchableOpacity>
+      <ContactButton label="Call" Icon={PhoneIcon} disabled={!job.phone} onPress={() => callCustomer(job.phone)} />
+      <ContactButton label="Text" Icon={MessageIcon} disabled={!job.phone} onPress={() => textCustomer(job.phone, smsBody)} />
+      <ContactButton label="Navigate" Icon={NavigateIcon} onPress={() => openNavigate(job.address)} />
     </View>
   );
 
@@ -686,44 +636,6 @@ export const JobsScreen: React.FC = () => {
             <TouchableOpacity style={styles.ghostBtn} onPress={() => void handleAddJobPhoto()}>
               <Text style={styles.ghostText}>📷 Add job photo</Text>
             </TouchableOpacity>
-          )}
-
-          {jobPhase !== 'complete' && !!job.id && (
-            <View style={styles.box}>
-              <Text style={styles.boxTitle}>Customer chat</Text>
-              {chatMessages.length === 0 ? (
-                <Text style={styles.hint}>No messages yet — ask about gate codes or parking.</Text>
-              ) : (
-                chatMessages.map((m) => {
-                  const mine = mechanicId && m.senderId === mechanicId;
-                  return (
-                    <View key={m.id} style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-                      <Text style={styles.bubbleBody}>{m.body}</Text>
-                      <Text style={styles.bubbleTime}>
-                        {new Date(m.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-                      </Text>
-                    </View>
-                  );
-                })
-              )}
-              <View style={styles.row}>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  placeholder="Message…"
-                  placeholderTextColor={colors.text.muted}
-                  value={chatDraft}
-                  onChangeText={setChatDraft}
-                  maxLength={2000}
-                />
-                <TouchableOpacity
-                  style={[styles.sendBtn, (chatBusy || !chatDraft.trim()) && styles.dim]}
-                  disabled={chatBusy || !chatDraft.trim()}
-                  onPress={() => void handleSendChat()}
-                >
-                  <Text style={styles.btnText}>Send</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
           )}
 
           {jobPhase === 'on_site' && (
@@ -968,10 +880,18 @@ const styles = StyleSheet.create({
   paidLabel: { color: 'rgba(52,211,153,0.9)', fontSize: 10, fontWeight: '800', marginTop: spacing.sm, textTransform: 'uppercase' },
 
   actionRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-  actionBtn: { flex: 1, ...btnBase, marginTop: 0 },
-  callBtn: { backgroundColor: '#059669' },
-  textBtn: { backgroundColor: '#7c3aed' },
-  navBtn: { backgroundColor: '#1d4ed8' },
+  contactBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border.orange,
+    backgroundColor: 'rgba(249,115,22,0.1)',
+  },
+  contactText: { color: colors.text.primary, fontWeight: '800', fontSize: 12 },
   primaryBtn: { ...btnBase, backgroundColor: colors.brand.orange },
   secondaryBtn: { ...btnBase, backgroundColor: 'rgba(255,255,255,0.1)' },
   completeBtn: { ...btnBase, backgroundColor: '#059669', paddingVertical: 14 },
@@ -983,7 +903,6 @@ const styles = StyleSheet.create({
   },
   ghostBtn: { ...btnBase, borderWidth: 1, borderColor: colors.border.primary, backgroundColor: 'rgba(255,255,255,0.04)' },
   ghostText: { color: colors.text.secondary, fontWeight: '700', fontSize: 12 },
-  sendBtn: { backgroundColor: '#1d4ed8', borderRadius: borderRadius.md, paddingHorizontal: 14, paddingVertical: 10 },
   btnText: { color: '#fff', fontWeight: '800', fontSize: 12 },
   cancelBtn: {
     ...btnBase,
@@ -1015,11 +934,6 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontSize: 13,
   },
-  bubble: { borderRadius: borderRadius.sm, paddingHorizontal: 10, paddingVertical: 6, maxWidth: '90%' },
-  bubbleMine: { alignSelf: 'flex-end', backgroundColor: 'rgba(249,115,22,0.2)' },
-  bubbleTheirs: { alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.06)' },
-  bubbleBody: { color: colors.text.secondary, fontSize: 12 },
-  bubbleTime: { color: colors.text.muted, fontSize: 9, marginTop: 2 },
 
   invoice: {
     borderWidth: 1,
@@ -1043,3 +957,21 @@ const styles = StyleSheet.create({
   claimText: { color: colors.text.secondary, fontSize: 12, flex: 1 },
   claimStatus: { color: colors.text.muted, fontSize: 11, fontWeight: '700' },
 });
+
+const ContactButton: React.FC<{
+  label: string;
+  Icon: React.FC<{ size?: number; color: string }>;
+  onPress: () => void;
+  disabled?: boolean;
+}> = ({ label, Icon, onPress, disabled }) => (
+  <TouchableOpacity
+    style={[styles.contactBtn, disabled && styles.dim]}
+    disabled={disabled}
+    onPress={onPress}
+    accessibilityRole="button"
+    accessibilityLabel={label}
+  >
+    <Icon color={colors.brand.orange} />
+    <Text style={styles.contactText}>{label}</Text>
+  </TouchableOpacity>
+);
