@@ -13,8 +13,10 @@ export function buildChargeReceiptMessage(opts: {
   referenceCode: string;
   amountDollars: number;
   kind: 'charge' | 'diagnostic_only' | 'no_show';
+  /** Optional itemized lines for charge receipts (diagnostic + repairs). */
   lines?: ChargeReceiptLine[];
   diagnosticDollars?: number;
+  salesTaxDollars?: number;
 }): string {
   const first = (opts.customerName || '').trim().split(/\s+/)[0] || 'there';
   const amt = opts.amountDollars.toFixed(2);
@@ -34,6 +36,7 @@ export function buildChargeReceiptMessage(opts: {
   const parts: string[] = [
     `Hi ${first}, your Adaptivity service is complete for job ${opts.referenceCode}.`,
   ];
+
   const diag = opts.diagnosticDollars ?? 100;
   const itemLines: string[] = [`• Mobile diagnostic: $${diag.toFixed(2)}`];
   for (const line of opts.lines || []) {
@@ -52,6 +55,9 @@ export function buildChargeReceiptMessage(opts: {
   if (itemLines.length > 1) {
     parts.push('Itemized:');
     parts.push(...itemLines);
+  }
+  if ((opts.salesTaxDollars || 0) > 0) {
+    parts.push(`Sales tax (parts): $${opts.salesTaxDollars!.toFixed(2)}`);
   }
   parts.push(`Total charged: $${amt}. Thank you for choosing Adaptivity Performance!`);
   return parts.join('\n');
@@ -73,6 +79,7 @@ export async function openChargeReceiptSms(opts: {
   kind: 'charge' | 'diagnostic_only' | 'no_show';
   lines?: ChargeReceiptLine[];
   diagnosticDollars?: number;
+  salesTaxDollars?: number;
 }): Promise<boolean> {
   const url = buildSmsUrl(opts.phone, buildChargeReceiptMessage(opts));
   if (!url) return false;

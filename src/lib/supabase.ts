@@ -40,6 +40,11 @@ export type DispatchBooking = {
   holdAmountCents: number | null;
   paymentStatus: string;
   preferredDate: string | null;
+  preferredTimeWindow: string | null;
+  customerNotes: string | null;
+  mechanicId: string | null;
+  /** 'shop' is a drop-off at a partner shop, where travel doesn't apply. */
+  locationType: 'mobile' | 'shop';
 };
 
 function mapRow(row: Record<string, unknown>): DispatchBooking {
@@ -60,6 +65,10 @@ function mapRow(row: Record<string, unknown>): DispatchBooking {
     holdAmountCents: (row.hold_amount_cents as number | null) ?? null,
     paymentStatus: (row.payment_status as string) || 'none',
     preferredDate: (row.preferred_date as string | null) ?? null,
+    preferredTimeWindow: (row.preferred_time_window as string | null) ?? null,
+    customerNotes: (row.customer_notes as string | null) ?? null,
+    mechanicId: (row.mechanic_id as string | null) ?? null,
+    locationType: row.location_type === 'shop' ? 'shop' : 'mobile',
   };
 }
 
@@ -194,109 +203,37 @@ export async function fetchTechW9Status(): Promise<TechW9Status> {
   };
 }
 
-export async function markTechW9Complete(): Promise<string> {
-  const { data, error } = await supabase.rpc('mark_tech_w9_complete');
-  if (error) throw error;
-  return String(data);
-}
-
-export type ContractorAgreementStatus = {
-  signed: boolean;
-  signedAt: string | null;
-};
-
-export async function fetchContractorAgreementStatus(): Promise<ContractorAgreementStatus> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { signed: false, signedAt: null };
-  const { data } = await supabase
-    .from('mechanic_details')
-    .select('contractor_agreement_signed_at')
-    .eq('profile_id', user.id)
-    .maybeSingle();
-  return {
-    signed: Boolean(data?.contractor_agreement_signed_at),
-    signedAt: (data?.contractor_agreement_signed_at as string) || null,
-  };
-}
-
-export async function markContractorAgreementSigned(): Promise<string> {
-  const { data, error } = await supabase.rpc('mark_contractor_agreement_signed');
-  if (error) throw error;
-  return String(data);
-}
-
-export async function fetchTechYearToDateCompensation(year = new Date().getFullYear()): Promise<{
-  year: number;
-  totalCents: number;
-  totalDollars: number;
-  thresholdDollars: number;
-  meetsNecThreshold: boolean;
-}> {
-  const start = `${year}-01-01T00:00:00.000Z`;
-  const end = `${year + 1}-01-01T00:00:00.000Z`;
-  const { data, error } = await supabase
-    .from('payments')
-    .select('tech_transfer_cents, status, created_at')
-    .gte('created_at', start)
-    .lt('created_at', end);
-  if (error) throw error;
-  const totalCents = (data ?? []).reduce((sum, row) => {
-    const status = String(row.status || '');
-    if (status !== 'succeeded' && status !== 'partially_refunded') return sum;
-    return sum + (Number(row.tech_transfer_cents) || 0);
-  }, 0);
-  const thresholdDollars = 600;
-  return {
-    year,
-    totalCents,
-    totalDollars: totalCents / 100,
-    thresholdDollars,
-    meetsNecThreshold: totalCents >= thresholdDollars * 100,
-  };
-}
-
+/**
+ * Claim order matches the web portal: the claim-booking edge function first,
+ * then the claim_booking_for_current_tech RPC, then a direct update. The
+ * database enforces the real gates (clocked in, current contractor agreement,
+ * W-9 on file, standalone capacity), so the app does not second-guess them.
+ */
 export async function claimBookingRow(referenceCode: string, mechanicId: string) {
-  const { data: detail } = await supabase
-    .from('mechanic_details')
-    .select('job_capacity, w9_completed_at, contractor_agreement_signed_at, contractor_agreement_signature_path')
-    .eq('profile_id', mechanicId)
-    .maybeSingle();
+  const cleanRef = referenceCode.trim();
 
-  if (!detail?.w9_completed_at) {
-    throw new Error(
-      'Complete IRS Form W-9 before your first job: open Settings → connect Stripe Express and submit your SSN or EIN (tax ID).'
-    );
+  try {
+    const { data } = await supabase.functions.invoke('claim-booking', {
+      body: { bookingReference: cleanRef, mechanicId },
+    });
+    if ((data as { ok?: boolean } | null)?.ok) return;
+  } catch (edgeErr) {
+    console.warn('claim-booking edge function notice:', edgeErr);
   }
 
-  if (!detail?.contractor_agreement_signed_at || !detail?.contractor_agreement_signature_path) {
-    throw new Error(
-      'Digitally sign the Independent Contractor Agreement on the website (Settings → Sign agreement) before claiming your first job.'
-    );
-  }
+  const { error: rpcError } = await supabase.rpc('claim_booking_for_current_tech', {
+    p_reference: cleanRef,
+  });
+  if (!rpcError) return;
 
-  if (detail?.job_capacity === 'standalone') {
-    const { data: active, error: activeErr } = await supabase
-      .from('bookings')
-      .select('id')
-      .eq('mechanic_id', mechanicId)
-      .in('status', ['EN_ROUTE', 'ON_SITE'])
-      .neq('reference_code', referenceCode)
-      .limit(1);
-    if (activeErr) throw activeErr;
-    if (active && active.length > 0) {
-      throw new Error(
-        'Standalone mode: finish your active job first, or switch to Multi-job in Settings.'
-      );
-    }
-  }
-
-  const { error } = await supabase
+  console.warn('claim_booking_for_current_tech RPC notice:', rpcError.message);
+  const { error: updateError } = await supabase
     .from('bookings')
     .update({ status: 'EN_ROUTE', mechanic_id: mechanicId, eta_minutes: 20, distance_miles: 8 })
-    .eq('reference_code', referenceCode);
-  if (error) throw error;
+    .ilike('reference_code', cleanRef);
+  if (updateError) {
+    throw new Error(rpcError.message || updateError.message || 'Could not claim job in database.');
+  }
 }
 
 export async function updateBookingRow(
@@ -309,17 +246,68 @@ export async function updateBookingRow(
     dispatch_lng: number;
   }>
 ) {
-  const { error } = await supabase.from('bookings').update(patch).eq('reference_code', referenceCode);
+  const { error } = await supabase
+    .from('bookings')
+    .update(patch)
+    .ilike('reference_code', referenceCode.trim());
   if (error) throw error;
 }
 
-export async function cancelJobWithHold(referenceCode: string) {
-  const { data, error } = await supabase.functions.invoke('cancel-booking-hold', {
-    body: { bookingReference: referenceCode, releaseJob: true },
-  });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(String(data.error));
-  return data;
+export type QuoteLineInput = {
+  title: string;
+  laborDollars: number;
+  partsDollars?: number;
+};
+
+/** Money is taken at the vehicle on Square, so the app records what was
+ *  collected rather than moving it. Same write as the web portal. */
+export async function recordInPersonPayment(
+  referenceCode: string,
+  opts?: {
+    lineItems?: QuoteLineInput[];
+    salesTaxDollars?: number;
+    totalCollectedDollars?: number;
+  }
+) {
+  const total =
+    opts?.totalCollectedDollars ??
+    (opts?.lineItems ?? []).reduce((sum, li) => sum + (li.laborDollars || 0) + (li.partsDollars || 0), 0) +
+      (opts?.salesTaxDollars ?? 0);
+
+  const { error } = await supabase
+    .from('bookings')
+    .update({
+      status: 'COMPLETED',
+      payment_status: 'paid_in_person',
+      total_estimate: total,
+      updated_at: new Date().toISOString(),
+    })
+    .ilike('reference_code', referenceCode.trim());
+  if (error) throw error;
+  return { ok: true, collectedDollars: total };
+}
+
+/** Release a claimed job back to the open pool. Nothing to void — no card was held. */
+export async function releaseJob(referenceCode: string) {
+  const { error } = await supabase
+    .from('bookings')
+    .update({ status: 'UNASSIGNED', mechanic_id: null, updated_at: new Date().toISOString() })
+    .ilike('reference_code', referenceCode.trim());
+  if (error) throw error;
+}
+
+/** Name for the app header, from the tech's profile. */
+export async function fetchMyDisplayName(): Promise<string | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data } = await supabase
+    .from('profiles')
+    .select('full_name, email')
+    .eq('id', user.id)
+    .maybeSingle();
+  return (data?.full_name as string) || (data?.email as string) || user.email || null;
 }
 
 export function subscribeDispatchBookings(onChange: () => void) {

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, SafeAreaView,
-  StatusBar, KeyboardAvoidingView, Platform, StyleSheet, Alert, Image,
+  View, Text, TextInput, TouchableOpacity,
+  KeyboardAvoidingView, Platform, StyleSheet, Alert, Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, borderRadius } from '../theme/colors';
 import { signInTech, ensureTechProfile, hasMechanicDetails } from '../lib/supabase';
 
@@ -56,7 +57,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.bg.primary} />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
@@ -77,7 +77,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           </View>
           <Text style={styles.cardTitle}>Technician Portal Login</Text>
           <Text style={styles.cardSubtitle}>
-            Enter your approved tech credentials to access automotive dispatch jobs & Stripe payouts.
+            Enter your approved tech credentials to access automotive dispatch jobs.
           </Text>
 
           {/* Email Input */}
@@ -123,7 +123,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <Text style={styles.aseVerified}>Trade Verified</Text>
             </View>
             <Text style={styles.aseDescription}>
-              Mobile dispatch accounts require completed background checks, tool verification, and linked Stripe Express payout setup.
+              Mobile dispatch accounts require completed background checks, tool verification, a signed contractor agreement, and a vehicle insurance disclosure.
             </Text>
           </View>
         </View>
