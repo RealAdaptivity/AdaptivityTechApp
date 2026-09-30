@@ -34,8 +34,12 @@ const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_AN
 // Square Mobile Payments SDK (Tap to Pay). Set these as EAS environment
 // variables (or in .env for local builds):
 //   SQUARE_APPLICATION_ID            Square app id (production, or sandbox-…)
-//   SQUARE_TAP_TO_PAY_IPHONE=1       only after Apple approves the Tap to Pay on
-//                                    iPhone entitlement for this app
+//   SQUARE_TAP_TO_PAY_IPHONE=1       only once Apple has approved the Tap to Pay
+//                                    on iPhone entitlement for *distribution*
+//                                    (App Store / TestFlight). With only the
+//                                    development approval, App Store builds
+//                                    fail: "Entitlement …payment.acceptance
+//                                    not found … in profile".
 const squareApplicationId = (process.env.SQUARE_APPLICATION_ID || '').trim();
 const tapToPayOnIphone = process.env.SQUARE_TAP_TO_PAY_IPHONE === '1';
 
@@ -70,5 +74,6 @@ module.exports = ({ config }) => ({
     supabaseUrl,
     supabaseAnonKey,
     squareApplicationId,
+    squareTapToPayOnIphone: tapToPayOnIphone,
   },
 });

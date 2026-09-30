@@ -39,6 +39,7 @@ import { VehicleInsuranceDisclosureModal } from '../components/VehicleInsuranceD
 import {
   ensureSquareAuthorized,
   prepareTapToPayOnIphone,
+  tapToPayOnIphoneEnabled,
   showSquareSettings,
   squareLocationName,
   tapToPayAvailability,
@@ -342,7 +343,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
                     await prepareTapToPayOnIphone();
                   },
                   Platform.OS === 'ios'
-                    ? 'Tap to Pay on iPhone is ready.'
+                    ? tapToPayOnIphoneEnabled()
+                      ? 'Tap to Pay on iPhone is ready.'
+                      : 'Connected. Pair a Square reader below to take cards — Tap to Pay on iPhone is coming soon.'
                     : 'Connected. Tap to Pay is offered when this phone supports it (NFC on).'
                 )
               }
@@ -350,7 +353,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
               <Text style={styles.primaryButtonText}>
                 {squareBusy
                   ? 'Working…'
-                  : Platform.OS === 'ios'
+                  : Platform.OS === 'ios' && tapToPayOnIphoneEnabled()
                     ? 'Set up Tap to Pay on iPhone'
                     : 'Connect to Square'}
               </Text>
