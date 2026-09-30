@@ -65,7 +65,7 @@ module.exports = ({ config }) => ({
         },
       },
     ],
-    ['./plugins/withSquareMobilePayments', { applicationId: squareApplicationId, tapToPayOnIphone }],
+    ['./plugins/withSquareMobilePayments', { applicationId: squareApplicationId, tapToPayOnIphone, kotlinVersion: '2.2.21' }],
   ],
   android: {
     ...(config.android || {}),

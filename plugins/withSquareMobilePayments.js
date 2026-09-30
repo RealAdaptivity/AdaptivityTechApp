@@ -17,7 +17,7 @@
  *    The Square Maven repo, Kotlin 2.2 and minSdk 28 come from
  *    expo-build-properties (see app.config.js).
  *
- * Options: { applicationId: string, tapToPayOnIphone?: boolean }
+ * Options: { applicationId: string, tapToPayOnIphone?: boolean, kotlinVersion?: string }
  * With no applicationId the plugin does nothing, and the app reports card
  * payments as not set up instead of starting an unconfigured SDK.
  */
@@ -29,6 +29,7 @@ const {
   withEntitlementsPlist,
   withInfoPlist,
   withMainApplication,
+  withProjectBuildGradle,
 } = require('expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
@@ -164,7 +165,26 @@ function withAndroidPermissions(config) {
   });
 }
 
+// The Android SDK is built with Kotlin 2.3 metadata, which only a 2.2+
+// compiler reads. React Native's Gradle plugin puts Kotlin 2.1 on the build
+// classpath and the root build.gradle doesn't pin a version, so
+// android.kotlinVersion alone doesn't change the compiler. Pin it here.
+const KOTLIN_GRADLE_PLUGIN = 'org.jetbrains.kotlin:kotlin-gradle-plugin';
+
+function withAndroidKotlinPlugin(config, kotlinVersion) {
+  return withProjectBuildGradle(config, (cfg) => {
+    const pinned = `classpath('${KOTLIN_GRADLE_PLUGIN}:${kotlinVersion}')`;
+    const src = cfg.modResults.contents;
+    const unpinned = /classpath\(\s*['"]org\.jetbrains\.kotlin:kotlin-gradle-plugin(:[^'"]*)?['"]\s*\)/;
+    if (!unpinned.test(src)) throw new Error(`${MARK}: could not find the Kotlin Gradle plugin in android/build.gradle`);
+    cfg.modResults.contents = src.replace(unpinned, pinned);
+    return cfg;
+  });
+}
+
 module.exports = function withSquareMobilePayments(config, options = {}) {
+  // The SDK package is installed either way, so Android always needs Kotlin 2.2+.
+  config = withAndroidKotlinPlugin(config, String(options.kotlinVersion || '2.2.21'));
   const applicationId = String(options.applicationId || '').trim();
   if (!applicationId) return config;
   config = withIosInit(config, applicationId);
