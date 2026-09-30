@@ -236,6 +236,34 @@ export class TapToPayNotLinkedError extends Error {
   }
 }
 
+/** True when this build uses Square's sandbox (test) application id. */
+export function isSquareSandbox(): boolean {
+  return squareApplicationId().startsWith('sandbox-');
+}
+
+/** Sandbox only: Square's floating test card reader, for completing a payment
+ *  without a real card. Never shown in production builds. */
+export async function showTestCardReader(): Promise<void> {
+  if (!isSquareSandbox()) throw new Error('The test card reader is only available in test (sandbox) builds.');
+  const s = requireSdk();
+  await ensureSquareAuthorized();
+  try {
+    await s.showMockReaderUI();
+  } catch (e) {
+    throw new Error(sdkErrorMessage(e, 'Could not open the test card reader.'));
+  }
+}
+
+export async function hideTestCardReader(): Promise<void> {
+  const s = loadSdk();
+  if (!s || !isSquareSandbox()) return;
+  try {
+    await s.hideMockReaderUI();
+  } catch {
+    /* already hidden */
+  }
+}
+
 /** Square's own screen for pairing readers and checking Tap to Pay. */
 export async function showSquareSettings(): Promise<void> {
   const s = requireSdk();
@@ -277,6 +305,8 @@ export async function takeCardPayment(opts: {
     // Unsupported iPhone: take the card on a paired reader instead.
     offerPhoneTap = status.state === 'linked';
   }
+  // Test builds: have Square's test card reader on screen to finish the payment.
+  if (isSquareSandbox()) await s.showMockReaderUI().catch(() => undefined);
 
   try {
     const payment = await s.startPayment(

@@ -6,8 +6,10 @@ three screen recordings and the completed **App Review Requirements
 Checklist**. This file says where the app meets each item and how to record
 each flow.
 
-Record on a **registered iPhone running a `preview` build**
-(`npx eas-cli build --profile preview --platform ios`). Apple wants the
+Record on a registered iPhone running a **`tap-to-pay-dev` build** (see
+"Building for Tap to Pay testing" below): Apple's development restriction only
+covers development-signed builds, so `preview` (ad hoc) and App Store builds
+can't include Tap to Pay yet. Apple wants the
 recordings made **with a second device** filming the iPhone, so the Tap to Pay
 screens (which block screen recording) are visible.
 
@@ -60,3 +62,50 @@ in the checklist.)
 2. "Tap to Pay on iPhone · $total" → tap a card (sandbox test card or a
    contactless card in sandbox) → approved → job closed → send receipt.
 3. Also show a declined/cancelled attempt and the fallback ("Paid another way").
+
+## Building for Tap to Pay testing (development-signed)
+
+The `tap-to-pay-dev` EAS profile signs with an **Apple Development**
+certificate and an **iOS App Development** provisioning profile that you create
+once and keep on your computer in `credentials.json` + `credentials/` (both
+git-ignored). Windows is fine — Git for Windows includes `openssl`.
+
+1. In the app folder, make a key and signing request (use Git Bash, or
+   PowerShell with `& "C:\Program Files\Git\usr\bin\openssl.exe"`):
+   ```
+   mkdir credentials
+   openssl genrsa -out credentials/dev.key 2048
+   openssl req -new -key credentials/dev.key -out credentials/dev.csr -subj "/emailAddress=you@example.com/CN=RealAdaptivity LLC/C=US"
+   ```
+2. developer.apple.com → Certificates → **+** → **Apple Development** → upload
+   `credentials/dev.csr` → download the `.cer` into `credentials/dev.cer`.
+3. Turn it into a `.p12` (pick your own password):
+   ```
+   openssl x509 -inform DER -in credentials/dev.cer -out credentials/dev.pem
+   openssl pkcs12 -export -legacy -inkey credentials/dev.key -in credentials/dev.pem -out credentials/dev.p12 -password pass:CHOOSE_A_PASSWORD
+   ```
+   (If `-legacy` is rejected, run it again without `-legacy`.)
+4. developer.apple.com → Profiles → **+** → **iOS App Development** → App ID
+   `com.adaptivityperformance.tech` → the certificate from step 2 → your
+   registered iPhones → if asked for **Additional Entitlements**, choose **Tap to
+   Pay on iPhone** → name it → download to `credentials/dev.mobileprovision`.
+5. Create `credentials.json` in the app folder:
+   ```json
+   {
+     "ios": {
+       "provisioningProfilePath": "credentials/dev.mobileprovision",
+       "distributionCertificate": {
+         "path": "credentials/dev.p12",
+         "password": "CHOOSE_A_PASSWORD"
+       }
+     }
+   }
+   ```
+6. Build and install on the registered iPhone:
+   ```
+   npx eas-cli build --profile tap-to-pay-dev --platform ios
+   ```
+
+If EAS refuses the development profile for this build type, the alternative
+is a development build from Xcode on a Mac (automatic signing handles all of
+the above).

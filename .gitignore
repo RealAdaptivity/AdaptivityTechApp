@@ -53,3 +53,7 @@ yarn-error.*
 # Apple / local secrets
 credentials/
 
+
+# Local signing credentials for the tap-to-pay-dev EAS profile (never commit)
+credentials.json
+credentials/

@@ -35,13 +35,15 @@ const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_AN
 // variables (or in .env for local builds):
 //   SQUARE_APPLICATION_ID            Square app id (production, or sandbox-…)
 //   SQUARE_TAP_TO_PAY_IPHONE=1       adds Apple's Tap to Pay on iPhone
-//                                    entitlement. Apple has approved it for
-//                                    registered test devices only, so it is set
-//                                    on the "preview" profile (internal / ad hoc
-//                                    builds) and not on "production" until Apple
-//                                    approves distribution — App Store builds
-//                                    with it fail: "Entitlement …payment.acceptance
-//                                    not found … in profile".
+//                                    entitlement. Apple approved it for
+//                                    *development-signed* builds only, so only
+//                                    the "tap-to-pay-dev" EAS profile sets it
+//                                    (it signs with a development certificate
+//                                    and profile from credentials.json). Ad hoc
+//                                    (preview) and App Store builds with it fail:
+//                                    "Entitlement …payment.acceptance not found
+//                                    … in profile". Add it to production once
+//                                    Apple approves distribution.
 const squareApplicationId = (process.env.SQUARE_APPLICATION_ID || '').trim();
 const tapToPayOnIphone = process.env.SQUARE_TAP_TO_PAY_IPHONE === '1';
 

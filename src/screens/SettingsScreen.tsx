@@ -40,7 +40,10 @@ import { TapToPaySetupModal } from '../components/TapToPaySetupModal';
 import { useTapToPayEducation } from '../components/TapToPayEducationModal';
 import {
   ensureSquareAuthorized,
+  hideTestCardReader,
   iphoneTapToPayStatus,
+  isSquareSandbox,
+  showTestCardReader,
   tapToPayOnIphoneEnabled,
   type IphoneTapToPayStatus,
   showSquareSettings,
@@ -389,6 +392,30 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
             >
               <Text style={styles.updateText}>Square settings & card readers</Text>
             </TouchableOpacity>
+            {isSquareSandbox() && (
+              <>
+                <Text style={[styles.taxSubtitle, { marginTop: spacing.md }]}>
+                  Test mode (Square sandbox): no real cards are charged. Show the test card reader, then start a
+                  payment from Get paid and use the reader's buttons to tap a test card.
+                </Text>
+                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                  <TouchableOpacity
+                    style={[styles.updateButton, { flex: 1 }]}
+                    disabled={squareBusy}
+                    onPress={() => void runSquare(showTestCardReader)}
+                  >
+                    <Text style={styles.updateText}>Show test card reader</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.updateButton, { flex: 1 }]}
+                    disabled={squareBusy}
+                    onPress={() => void hideTestCardReader()}
+                  >
+                    <Text style={styles.updateText}>Hide</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </>
         )}
       </View>
