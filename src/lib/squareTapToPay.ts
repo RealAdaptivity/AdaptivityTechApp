@@ -214,6 +214,36 @@ export function watchTapToPayReader(onChange: (state: TapToPayReaderState) => vo
   };
 }
 
+/** Checkout on an iPhone whose Tap to Pay reader is still being configured:
+ *  report progress (for the "getting ready" screen, 5.7) and resolve once it
+ *  is ready. Rejects after `timeoutMs`. Resolves at once when it is ready. */
+export function waitForTapToPayReady(
+  onProgress: (state: TapToPayReaderState) => void,
+  timeoutMs = 90_000
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let stop: () => void = () => undefined;
+    const finish = (err?: Error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      stop();
+      if (err) reject(err);
+      else resolve();
+    };
+    const timer = setTimeout(
+      () => finish(new Error('Tap to Pay on iPhone is still getting ready. Keep the app open and connected, then try again.')),
+      timeoutMs
+    );
+    stop = watchTapToPayReader((state) => {
+      onProgress(state);
+      if (state.ready) finish();
+    });
+    if (done) stop();
+  });
+}
+
 /** Get Tap to Pay ready before it is needed, so checkout starts fast (1.5).
  *  Quietly does nothing when this iPhone is not set up for it. */
 export async function warmUpTapToPay(): Promise<void> {

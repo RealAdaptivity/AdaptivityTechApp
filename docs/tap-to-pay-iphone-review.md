@@ -34,10 +34,13 @@ screens (which block screen recording) are visible.
 | 4.1 | Use ProximityReaderDiscovery on iOS 18+ | `modules/tap-to-pay-education` presents Apple's `howToTap` content |
 | 4.2, 4.3 | Education after acceptance and in Settings | Shown from the ready screen and Settings → "How to use Tap to Pay on iPhone" |
 | 4.5–4.8 | Contactless cards, Apple Pay/wallets, PIN & accessibility, fallback | Apple's content on iOS 18+; the app's own four pages on older iOS |
-| 5.1, 5.2 | Clear Tap to Pay button, first payment option | "Tap to Pay on iPhone · $total" is the first option on Get paid |
+| 5.1, 5.2 | Clear Tap to Pay button, first payment option, no scrolling | "Tap to Pay on iPhone · $total" is fixed at the bottom of Get paid; Card is first, ahead of Zelle and Cash |
 | 5.3 | Never greyed out | Always tappable; explains what's missing or opens setup |
-| 5.6–5.8 | Fast, clear processing | Square SDK payment sheet; reader warmed at launch |
-| 5.9–5.11 | Result shown, digital receipt | Job closed screen with total, then text/email receipt |
+| 5.6, 5.8 | Fast, clear processing | Square SDK payment sheet; reader warmed at launch |
+| 5.7 | "Initializing" while configuring | The button becomes "Tap to Pay on iPhone will be ready soon" with live progress until the reader is ready |
+| 5.9 | Result shown | Approved: job closed screen; declined / timed out: the reason, with retry or another method |
+| 5.10 | Receipt, approved or declined | Approved: itemized signed receipt by SMS / email (Twilio, email service); declined: "Send the customer a receipt for the declined payment" (iOS share sheet) |
+| 5.12 | Not approved while the app was closed | Local notification "Payment not approved" |
 | 6.x | Marketing | Use only Apple's Tap to Pay on iPhone Marketing Toolkit assets in any announcement |
 
 ## Recording scripts
@@ -109,3 +112,18 @@ git-ignored). Windows is fine — Git for Windows includes `openssl`.
 If EAS refuses the development profile for this build type, the alternative
 is a development build from Xcode on a Mac (automatic signing handles all of
 the above).
+
+## Submitting
+
+- The filled-in checklist (`App_Review_Requirements_Checklist_1_7_Adaptivity.numbers`)
+  and the three recordings go back to Apple by replying to the entitlement email.
+- Distribution: Custom App via Apple Business Manager (employees only), so the
+  public-App-Store onboarding rules (2.x) don't apply and Terms and Conditions
+  can also be accepted for the organization in Apple Business Connect (3.8.2).
+- At launch (after the publishing entitlement): Toolkit "Launch" email to all
+  techs (6.1), Toolkit "Hero" banner in the splash (6.2), push with the Toolkit
+  "Value Proposition" copy (3.3 / 6.3). Only Apple Toolkit assets and copy.
+- App Store Connect review notes: declare the Tap to Pay on iPhone entitlement,
+  describe the use case (technicians take payment at the vehicle), give a test
+  technician login, attach the checkout recording, don't mention MDM, and don't
+  put "Tap to Pay" in the app name.

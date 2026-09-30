@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import * as Notifications from 'expo-notifications';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -40,6 +43,8 @@ import {
   takeCardPayment,
   tapToPayAvailability,
   TapToPayNotLinkedError,
+  waitForTapToPayReady,
+  type TapToPayReaderState,
 } from '../lib/squareTapToPay';
 import { TapToPaySetupModal } from './TapToPaySetupModal';
 import { SheetModal } from './SheetModal';
@@ -68,6 +73,21 @@ const OFFLINE_COPY: Record<OfflineMethod, { title: string; confirm: string }> = 
   cash: { title: 'Cash received?', confirm: 'Cash received' },
   square_app: { title: 'Paid on the Square app?', confirm: 'Customer paid' },
 };
+
+/** A card payment was not approved while the tech was out of the app (5.12). */
+async function notifyNotApproved(referenceCode: string, totalCents: number): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Payment not approved',
+        body: `The ${formatCents(totalCents)} card payment for job ${referenceCode} was not approved. Open the app to try again or take another payment method.`,
+      },
+      trigger: null,
+    });
+  } catch {
+    /* notifications off: the result is still on the Get paid screen */
+  }
+}
 
 function zelleName(z: ZelleConfig | null): string {
   return z?.displayName || 'Adaptivity Performance';
@@ -98,11 +118,17 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
   const [busy, setBusy] = useState<null | 'card' | 'other'>(null);
   const [error, setError] = useState<string | null>(null);
   const [payMethod, setPayMethod] = useState<PayMethod>('card');
+  // Tap to Pay still being configured when the button was pressed (5.7).
+  const [readying, setReadying] = useState<TapToPayReaderState | null>(null);
+  // A card payment that was not approved: the customer can still be sent a
+  // receipt for it (5.10).
+  const [declined, setDeclined] = useState<{ reason: string; at: Date } | null>(null);
   const [zelle, setZelle] = useState<ZelleConfig | null>(null);
   const [closed, setClosed] = useState<{ totalCents: number; payoutCents: number; method: PayMethod } | null>(null);
   // Once a card has been charged the amounts are locked: closing may be
   // retried, but the customer is never charged a second time.
   const [charged, setCharged] = useState<{ paymentId: string; signaturePath: string } | null>(null);
+  const chargedRef = useRef(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -165,6 +191,8 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
     }
     setBusy('card');
     setError(null);
+    setDeclined(null);
+    let cardAttempted = false;
     try {
       let current = charged;
       if (!current) {
@@ -173,14 +201,24 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
         if (Platform.OS === 'ios' && phoneTapToPayOffered()) {
           const status = await iphoneTapToPayStatus();
           if (status.state === 'not_linked') throw new TapToPayNotLinkedError();
+          // Still configuring: show "getting ready" until it is (5.7).
+          if (status.state === 'linked') {
+            try {
+              await waitForTapToPayReady((state) => setReadying(state.ready ? null : state));
+            } finally {
+              setReadying(null);
+            }
+          }
         }
         const signaturePath = await saveSignature();
+        cardAttempted = true;
         const result = await takeCardPayment({
           amountCents: closeOut.totalCents,
           referenceCode: job.referenceCode,
           note: `${job.referenceCode} · ${job.customer} · ${job.vehicle}`.trim(),
         });
         current = { paymentId: result.paymentId, signaturePath };
+        chargedRef.current = true;
         setCharged(current);
       }
       const saved = await recordSquarePayment(job.id, current.paymentId, closeOut, options(current.signaturePath));
@@ -191,7 +229,14 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
         setTapToPaySetupOpen(true);
         return;
       }
-      setError(e instanceof Error ? e.message : 'The card payment did not go through.');
+      const reason = e instanceof Error ? e.message : 'The card payment did not go through.';
+      setError(reason);
+      // Not approved (rather than approved but not yet saved): offer a
+      // receipt, and tell the tech if they had left the app meanwhile (5.12).
+      if (cardAttempted && !chargedRef.current) {
+        setDeclined({ reason, at: new Date() });
+        if (AppState.currentState !== 'active') void notifyNotApproved(job.referenceCode, closeOut.totalCents);
+      }
     } finally {
       setBusy(null);
     }
@@ -240,6 +285,19 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
         },
       ]
     );
+  };
+
+  const shareDeclinedReceipt = async () => {
+    if (!declined) return;
+    const when = declined.at.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    await Share.share({
+      message:
+        `Adaptivity Performance — card payment not approved\n` +
+        `Job ${job.referenceCode} · ${when}\n` +
+        `Amount: ${formatCents(closeOut.totalCents)}\n` +
+        `Result: not approved. Your card was not charged.\n` +
+        `Reason: ${declined.reason}`,
+    }).catch(() => undefined);
   };
 
   const requestClose = () => {
@@ -466,6 +524,11 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
           </View>
 
           {!!error && <Text style={styles.error}>{error}</Text>}
+          {!!declined && (
+            <TouchableOpacity style={styles.otherBtn} onPress={() => void shareDeclinedReceipt()}>
+              <Text style={styles.otherBtnText}>Send the customer a receipt for the declined payment</Text>
+            </TouchableOpacity>
+          )}
 
           <Text style={styles.payLabel}>How is the customer paying?</Text>
           <View style={styles.row}>
@@ -483,19 +546,6 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
 
           {payMethod === 'card' && (
             <>
-              <TouchableOpacity
-                style={[styles.cardBtn, !card.available && styles.dim]}
-                disabled={busy !== null || !card.available}
-                onPress={() => void payByCard()}
-              >
-                {busy === 'card' ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.cardBtnText}>
-                    {charged ? 'Finish closing the job (card already charged)' : `${cardLabel} · ${formatCents(closeOut.totalCents)}`}
-                  </Text>
-                )}
-              </TouchableOpacity>
               {!card.available && <Text style={styles.hint}>{card.reason}</Text>}
 
               {!charged && (
@@ -565,6 +615,34 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
             {problem ?? (charged ? 'Card charged — finish closing to save it.' : 'Ready — choose how the customer paid.')}
           </Text>
         </ScrollView>
+      )}
+      {!closed && payMethod === 'card' && (
+        // Always on screen, never greyed out, first payment option (5.1–5.3).
+        <View style={styles.footer}>
+          {readying ? (
+            <View style={styles.readying}>
+              <ActivityIndicator color={colors.brand.orange} />
+              <Text style={styles.readyingText}>
+                Tap to Pay on iPhone will be ready soon. {readying.label}
+                {readying.percent != null ? ` ${readying.percent}%` : ''}
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[styles.cardBtn, { marginTop: 0 }, !card.available && styles.dim]}
+              disabled={busy !== null || !card.available}
+              onPress={() => void payByCard()}
+            >
+              {busy === 'card' ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.cardBtnText}>
+                  {charged ? 'Finish closing the job (card already charged)' : `${cardLabel} · ${formatCents(closeOut.totalCents)}`}
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
       )}
       <TapToPaySetupModal visible={tapToPaySetupOpen} onClose={() => setTapToPaySetupOpen(false)} />
     </SheetModal>
@@ -797,6 +875,16 @@ const styles = StyleSheet.create({
   otherBtnText: { color: colors.text.primary, fontSize: 15, fontWeight: '700' },
   hint: { color: colors.text.muted, fontSize: 12, textAlign: 'center' },
   payLabel: { color: colors.text.secondary, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', marginTop: spacing.sm },
+  footer: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border.primary,
+    backgroundColor: colors.bg.card,
+  },
+  readying: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  readyingText: { color: colors.text.primary, fontSize: 14, fontWeight: '700', flexShrink: 1 },
   zelleCard: { alignItems: 'stretch', gap: spacing.sm },
   zelleAmount: { color: colors.text.primary, fontSize: 28, fontWeight: '900', textAlign: 'center' },
   qrWrap: { alignSelf: 'center', padding: 8, backgroundColor: '#fff', borderRadius: borderRadius.md },
