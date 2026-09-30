@@ -31,8 +31,34 @@ loadDotEnv();
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || FALLBACK_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_ANON;
 
+// Square Mobile Payments SDK (Tap to Pay). Set these as EAS environment
+// variables (or in .env for local builds):
+//   SQUARE_APPLICATION_ID            Square app id (production, or sandbox-…)
+//   SQUARE_TAP_TO_PAY_IPHONE=1       only after Apple approves the Tap to Pay on
+//                                    iPhone entitlement for this app
+const squareApplicationId = (process.env.SQUARE_APPLICATION_ID || '').trim();
+const tapToPayOnIphone = process.env.SQUARE_TAP_TO_PAY_IPHONE === '1';
+
 module.exports = ({ config }) => ({
   ...config,
+  plugins: [
+    ...(config.plugins || []),
+    [
+      'expo-build-properties',
+      {
+        // Mobile Payments SDK 2.6 needs Kotlin 2.2, compileSdk 36, minSdk 28
+        // and Square's Maven repository.
+        android: {
+          minSdkVersion: 28,
+          compileSdkVersion: 36,
+          targetSdkVersion: 36,
+          kotlinVersion: '2.2.21',
+          extraMavenRepos: ['https://sdk.squareup.com/public/android/'],
+        },
+      },
+    ],
+    ['./plugins/withSquareMobilePayments', { applicationId: squareApplicationId, tapToPayOnIphone }],
+  ],
   android: {
     ...(config.android || {}),
     permissions: [
@@ -43,5 +69,6 @@ module.exports = ({ config }) => ({
     ...(config.extra || {}),
     supabaseUrl,
     supabaseAnonKey,
+    squareApplicationId,
   },
 });

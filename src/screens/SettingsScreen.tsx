@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, AppState,
+  View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, AppState, Platform,
 } from 'react-native';
 import { colors, spacing, borderRadius } from '../theme/colors';
 import {
@@ -36,6 +36,13 @@ import { listOfflineJobPackets, type OfflineJobPacket } from '../lib/offlineJobP
 import { FORM_1099_NEC_NOTICE, FORM_1099_NEC_PLATFORM_NOTE } from '../content/taxForms';
 import { ContractorAgreementSignModal } from '../components/ContractorAgreementSignModal';
 import { VehicleInsuranceDisclosureModal } from '../components/VehicleInsuranceDisclosureModal';
+import {
+  ensureSquareAuthorized,
+  prepareTapToPayOnIphone,
+  showSquareSettings,
+  squareLocationName,
+  tapToPayAvailability,
+} from '../lib/squareTapToPay';
 
 const PORTAL_URL = 'https://adaptivityperformance.com/portal';
 
@@ -65,6 +72,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
   const [unavailReason, setUnavailReason] = useState('');
   const [unavailBusy, setUnavailBusy] = useState(false);
   const [offlinePackets, setOfflinePackets] = useState<OfflineJobPacket[]>([]);
+  const [squareLocation, setSquareLocation] = useState<string | null>(null);
+  const [squareBusy, setSquareBusy] = useState(false);
+  const cardPayments = tapToPayAvailability();
 
   const refreshDocuments = useCallback(async () => {
     const [w, a, d] = await Promise.all([
@@ -187,6 +197,23 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
     }
   };
 
+  useEffect(() => {
+    if (cardPayments.available) void squareLocationName().then(setSquareLocation);
+  }, [cardPayments.available]);
+
+  const runSquare = async (action: () => Promise<void>, done?: string) => {
+    setSquareBusy(true);
+    try {
+      await action();
+      setSquareLocation(await squareLocationName());
+      if (done) Alert.alert('Card payments', done);
+    } catch (e: unknown) {
+      Alert.alert('Card payments', e instanceof Error ? e.message : 'Something went wrong');
+    } finally {
+      setSquareBusy(false);
+    }
+  };
+
   const viewSignature = async (path: string | null) => {
     const url = await getSignatureUrl(path);
     if (url) void Linking.openURL(url);
@@ -281,6 +308,62 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
             {disclosure?.signedAt ? 'Update my insurance details →' : 'Read & sign the disclosure →'}
           </Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>💳</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>Card payments (Square Tap to Pay)</Text>
+            <Text style={styles.cardSubtitle}>
+              Customers tap their card or phone on your phone at the end of the job. Set it up once before your
+              first card payment.
+            </Text>
+          </View>
+        </View>
+        <Text
+          style={[styles.statusText, { color: cardPayments.available && squareLocation ? colors.status.success : '#fcd34d' }]}
+        >
+          {!cardPayments.available
+            ? cardPayments.reason
+            : squareLocation
+              ? `Connected to Square · ${squareLocation}`
+              : 'Not connected to Square yet on this phone.'}
+        </Text>
+        {cardPayments.available && (
+          <>
+            <TouchableOpacity
+              style={[styles.primaryButton, squareBusy && { opacity: 0.6 }]}
+              disabled={squareBusy}
+              onPress={() =>
+                void runSquare(
+                  async () => {
+                    await ensureSquareAuthorized();
+                    await prepareTapToPayOnIphone();
+                  },
+                  Platform.OS === 'ios'
+                    ? 'Tap to Pay on iPhone is ready.'
+                    : 'Connected. Tap to Pay is offered when this phone supports it (NFC on).'
+                )
+              }
+            >
+              <Text style={styles.primaryButtonText}>
+                {squareBusy
+                  ? 'Working…'
+                  : Platform.OS === 'ios'
+                    ? 'Set up Tap to Pay on iPhone'
+                    : 'Connect to Square'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.updateButton}
+              disabled={squareBusy}
+              onPress={() => void runSquare(showSquareSettings)}
+            >
+              <Text style={styles.updateText}>Square settings & card readers</Text>
+            </TouchableOpacity>
+          </>
+        )}
       </View>
 
       <View style={styles.card}>

@@ -17,16 +17,14 @@ import {
   claimBookingRow,
   fetchDispatchBookings,
   fetchMyTechSpecialties,
-  recordInPersonPayment,
   releaseJob,
   subscribeDispatchBookings,
   supabase,
   updateBookingRow,
   type DispatchBooking,
-  type QuoteLineInput,
 } from '../lib/supabase';
 import { pushTechGpsToBooking } from '../lib/locationDispatch';
-import { sendOnTheWaySmsAuto, sendChargeReceiptSmsAuto, notifyCustomerPush } from '../lib/sendSms';
+import { sendOnTheWaySmsAuto, notifyCustomerPush } from '../lib/sendSms';
 import { normalizePhoneForSms } from '../lib/onTheWaySms';
 import { uploadJobPhotoUri } from '../lib/jobPhotos';
 import { specialtyMatchHint } from '../lib/jobSpecialtyMatch';
@@ -43,19 +41,13 @@ import {
 } from '../lib/offlineJobPacket';
 import { fetchJobMessages, sendJobMessage, subscribeJobMessages, type JobMessage } from '../lib/jobChat';
 import { clockIn, clockOut, fetchMyShiftStatus, shiftElapsedLabel, type ShiftStatus } from '../lib/techShifts';
-import {
-  DIAGNOSTIC_FEE_DOLLARS,
-  SALES_TAX_RATE,
-  TECH_LABOR_SHARE,
-  TRAVEL_FEE_DOLLARS,
-} from '../lib/pricing';
+import { DIAGNOSTIC_FEE_DOLLARS } from '../lib/pricing';
+import { computeCloseOut } from '../lib/closeOut';
+import { recordJobPayment } from '../lib/jobPayments';
+import { GetPaidScreen } from '../components/GetPaidScreen';
 
-type LineDraft = { title: string; laborDollars: string; partsDollars: string };
 type JobPhase = 'en_route' | 'on_site' | 'complete';
 type JobsFilter = 'today' | 'available' | 'active' | 'completed';
-type TaxMode = 'parts' | 'total' | 'none';
-
-const EMPTY_LINE: LineDraft = { title: '', laborDollars: '', partsDollars: '' };
 
 function todayISODate(): string {
   const d = new Date();
@@ -114,13 +106,7 @@ export const JobsScreen: React.FC = () => {
   const [mySpecialties, setMySpecialties] = useState<string[]>(['mechanical']);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [techNotes, setTechNotes] = useState('');
-  const [customerAgreed, setCustomerAgreed] = useState(false);
-  const [lines, setLines] = useState<LineDraft[]>([EMPTY_LINE]);
-  const [includeDiagnosticFee, setIncludeDiagnosticFee] = useState(false);
-  const [mileageFee, setMileageFee] = useState('');
-  const [taxMode, setTaxMode] = useState<TaxMode>('parts');
-  const [partsPurchasedBy, setPartsPurchasedBy] = useState<'tech' | 'company'>('tech');
+  const [payOpen, setPayOpen] = useState(false);
   const [shift, setShift] = useState<ShiftStatus>({ onShift: false, since: null });
   const [shiftBusy, setShiftBusy] = useState(false);
   const [expenseAmount, setExpenseAmount] = useState('');
@@ -208,13 +194,6 @@ export const JobsScreen: React.FC = () => {
     }
   }, [jobs, mechanicId, activeJob]);
 
-  // Every mobile visit carries the flat travel fee the customer saw at booking.
-  const activeJobId = activeJob?.id;
-  const activeJobLocation = activeJob?.locationType;
-  useEffect(() => {
-    setMileageFee(activeJobId && activeJobLocation !== 'shop' ? String(TRAVEL_FEE_DOLLARS) : '');
-  }, [activeJobId, activeJobLocation]);
-
   useEffect(() => {
     if (!activeJob || jobPhase === 'complete') return;
     void pushTechGpsToBooking(activeJob.referenceCode);
@@ -296,15 +275,6 @@ export const JobsScreen: React.FC = () => {
     if (!result.sent) setMessage('This booking has no customer phone on file.');
   };
 
-  const resetInvoice = () => {
-    setLines([EMPTY_LINE]);
-    setTechNotes('');
-    setCustomerAgreed(false);
-    setIncludeDiagnosticFee(false);
-    setTaxMode('parts');
-    setPartsPurchasedBy('tech');
-  };
-
   const handleClaim = async (job: DispatchBooking) => {
     let mechId = mechanicId;
     if (!mechId) {
@@ -329,7 +299,6 @@ export const JobsScreen: React.FC = () => {
       setActiveJob(claimed);
       setFilter('active');
       setJobPhase('en_route');
-      resetInvoice();
       void cacheOfflineJobPacket(claimed).then(() => listOfflineJobPackets().then(setOfflinePackets));
       await loadJobs();
       void notifyCustomerPush({
@@ -385,120 +354,22 @@ export const JobsScreen: React.FC = () => {
     }
   };
 
-  // ── Invoice math (same as the web portal) ──
-  const laborSubtotal = lines.reduce((s, l) => s + (Number(l.laborDollars) || 0), 0);
-  const partsSubtotal = lines.reduce((s, l) => s + (Number(l.partsDollars) || 0), 0);
-  const mileageTotal = Number(mileageFee) || 0;
   const quotedDollars = (activeJob?.holdAmountCents ?? DIAGNOSTIC_FEE_DOLLARS * 100) / 100;
-  const appliedDiagnosticDollars = includeDiagnosticFee ? quotedDollars : 0;
-  const subtotalBeforeTax = appliedDiagnosticDollars + laborSubtotal + partsSubtotal + mileageTotal;
-  const taxableBase = taxMode === 'parts' ? partsSubtotal : taxMode === 'total' ? subtotalBeforeTax : 0;
-  const salesTaxDollars = Math.round(taxableBase * SALES_TAX_RATE * 100) / 100;
-  const chargeTotal = subtotalBeforeTax + salesTaxDollars;
-  const techLaborShare =
-    Math.round((appliedDiagnosticDollars + laborSubtotal + mileageTotal) * TECH_LABOR_SHARE * 100) / 100;
-  const techPartsShare = partsPurchasedBy === 'tech' ? partsSubtotal : 0;
-  const techPayout = techLaborShare + techPartsShare;
 
   const finishJob = () => {
     setBusy(false);
     setTimeout(() => {
       setActiveJob(null);
-      setFilter('available');
+      setFilter('completed');
       setJobPhase('en_route');
-      resetInvoice();
       void loadJobs();
-    }, 2500);
+    }, 1500);
   };
 
-  const handleCollected = async () => {
-    if (!activeJob) return;
-    if (!customerAgreed) {
-      setMessage('⚠️ Check the box confirming the customer agreed to the on-site price.');
-      return;
-    }
-    const lineItems: QuoteLineInput[] = lines
-      .map((l) => {
-        const labor = Number(l.laborDollars) || 0;
-        const parts = Number(l.partsDollars) || 0;
-        let title = l.title.trim();
-        if (!title && (labor > 0 || parts > 0)) {
-          title = labor > 0 && parts > 0 ? 'Mechanical Labor & Parts' : labor > 0 ? 'Mechanical Labor' : 'Replacement Parts';
-        }
-        return { title, laborDollars: labor, partsDollars: parts };
-      })
-      .filter((l) => l.title && (l.laborDollars > 0 || (l.partsDollars ?? 0) > 0));
-
-    if (!lineItems.length && !includeDiagnosticFee) {
-      setMessage(
-        `⚠️ Enter a labor or parts amount (or add the $${quotedDollars.toFixed(0)} diagnostic fee) before closing.`
-      );
-      return;
-    }
-    if (includeDiagnosticFee) {
-      lineItems.unshift({ title: 'Mobile Diagnostic', laborDollars: appliedDiagnosticDollars, partsDollars: 0 });
-    }
-    if (mileageTotal > 0) {
-      lineItems.push({ title: 'Mileage / Travel Fee', laborDollars: mileageTotal, partsDollars: 0 });
-    }
-
-    setBusy(true);
-    setMessage(null);
-    try {
-      const result = await recordInPersonPayment(activeJob.referenceCode, { lineItems, salesTaxDollars });
-      setJobPhase('complete');
-      setMessage(`${money(result.collectedDollars)} recorded as collected in person — job closed.`);
-      await sendChargeReceiptSmsAuto({
-        phone: activeJob.phone || '',
-        customerName: activeJob.customer,
-        referenceCode: activeJob.referenceCode,
-        amountDollars: result.collectedDollars,
-        kind: 'charge',
-        lines: lineItems.filter((l) => l.title !== 'Mobile Diagnostic'),
-        diagnosticDollars: appliedDiagnosticDollars,
-        salesTaxDollars,
-      });
-      finishJob();
-    } catch (e: unknown) {
-      setMessage(e instanceof Error ? e.message : 'Could not record the payment');
-      setBusy(false);
-    }
-  };
-
-  const handleDiagnosticOnly = () => {
-    if (!activeJob) return;
-    Alert.alert(
-      'Diagnostic only?',
-      `Record ${money(quotedDollars)} diagnostic collected in person and close the job?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: `Record ${money(quotedDollars)}`,
-          onPress: async () => {
-            setBusy(true);
-            setMessage(null);
-            try {
-              const result = await recordInPersonPayment(activeJob.referenceCode, {
-                totalCollectedDollars: quotedDollars,
-              });
-              setJobPhase('complete');
-              setMessage(`Diagnostic ${money(result.collectedDollars)} recorded as collected in person.`);
-              await sendChargeReceiptSmsAuto({
-                phone: activeJob.phone || '',
-                customerName: activeJob.customer,
-                referenceCode: activeJob.referenceCode,
-                amountDollars: result.collectedDollars,
-                kind: 'diagnostic_only',
-              });
-              finishJob();
-            } catch (e: unknown) {
-              setMessage(e instanceof Error ? e.message : 'Could not record the diagnostic');
-              setBusy(false);
-            }
-          },
-        },
-      ]
-    );
+  // Closed from the Get paid screen (card or in person).
+  const handlePaid = () => {
+    setJobPhase('complete');
+    void loadJobs();
   };
 
   const handleNoShow = () => {
@@ -512,7 +383,15 @@ export const JobsScreen: React.FC = () => {
           setBusy(true);
           setMessage(null);
           try {
-            await recordInPersonPayment(activeJob.referenceCode, { totalCollectedDollars: 0 });
+            const noShow = computeCloseOut({
+              kind: 'no_show',
+              lines: [],
+              diagnosticCents: 0,
+              travelCents: 0,
+              taxMode: 'none',
+              partsBy: 'tech',
+            });
+            await recordJobPayment(activeJob.id, noShow, { taxMode: 'none', partsBy: 'tech' });
             setJobPhase('complete');
             setMessage('No-show recorded — job closed, nothing collected.');
             finishJob();
@@ -564,10 +443,6 @@ export const JobsScreen: React.FC = () => {
     } finally {
       setExpenseBusy(false);
     }
-  };
-
-  const setLine = (idx: number, patch: Partial<LineDraft>) => {
-    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   };
 
   const renderContactRow = (job: DispatchBooking, smsBody: string) => (
@@ -666,8 +541,6 @@ export const JobsScreen: React.FC = () => {
       </Text>
     </View>
   );
-
-  const toggle = (on: boolean, onStyle: object) => [styles.toggle, on && onStyle];
 
   if (loading) {
     return (
@@ -855,217 +728,17 @@ export const JobsScreen: React.FC = () => {
 
           {jobPhase === 'on_site' && (
             <View style={styles.invoice}>
-              <View style={styles.invoiceHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.invoiceTitle}>On-site invoice</Text>
-                  <Text style={styles.muted}>Collect on Square, then record it here to close the job.</Text>
-                </View>
-                <Text style={styles.totalBadge}>{money(chargeTotal)}</Text>
-              </View>
-
-              {/* 1. Diagnostic fee */}
-              <View style={styles.box}>
-                <View style={styles.spread}>
-                  <Text style={styles.boxLabel}>🔍 Mobile diagnostic ({money(quotedDollars)} on file)</Text>
-                  <Text style={styles.mono}>{includeDiagnosticFee ? money(quotedDollars) : 'WAIVED'}</Text>
-                </View>
-                <View style={styles.row}>
-                  <TouchableOpacity
-                    style={toggle(!includeDiagnosticFee, styles.toggleGreen)}
-                    onPress={() => setIncludeDiagnosticFee(false)}
-                  >
-                    <Text style={styles.toggleText}>✓ Waive diag fee</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={toggle(includeDiagnosticFee, styles.toggleOrange)}
-                    onPress={() => setIncludeDiagnosticFee(true)}
-                  >
-                    <Text style={styles.toggleText}>+ Charge ${quotedDollars.toFixed(0)} diag</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.small}>
-                  {!includeDiagnosticFee
-                    ? `Free diagnostic with repair — the ${money(quotedDollars)} diagnostic is credited toward the repair.`
-                    : `The ${money(quotedDollars)} diagnostic visit fee is charged on top of labor & parts.`}
-                </Text>
-              </View>
-
-              {/* 2. Repair lines */}
-              <View style={styles.spread}>
-                <Text style={styles.boxTitle}>Repair lines (labor & parts)</Text>
-                <TouchableOpacity onPress={() => setLines((p) => [...p, EMPTY_LINE])}>
-                  <Text style={styles.addLine}>+ Add line</Text>
-                </TouchableOpacity>
-              </View>
-              {lines.map((line, idx) => (
-                <View key={idx} style={styles.lineBlock}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Line title (e.g. Front Brake Pads & Rotors)"
-                    placeholderTextColor={colors.text.muted}
-                    value={line.title}
-                    onChangeText={(t) => setLine(idx, { title: t })}
-                  />
-                  <View style={styles.row}>
-                    <TextInput
-                      style={[styles.input, { flex: 1 }]}
-                      placeholder="Labor $"
-                      placeholderTextColor={colors.text.muted}
-                      keyboardType="decimal-pad"
-                      value={line.laborDollars}
-                      onChangeText={(t) => setLine(idx, { laborDollars: t })}
-                    />
-                    <TextInput
-                      style={[styles.input, { flex: 1 }]}
-                      placeholder="Parts $"
-                      placeholderTextColor={colors.text.muted}
-                      keyboardType="decimal-pad"
-                      value={line.partsDollars}
-                      onChangeText={(t) => setLine(idx, { partsDollars: t })}
-                    />
-                  </View>
-                  {lines.length > 1 && (
-                    <TouchableOpacity onPress={() => setLines((p) => p.filter((_, i) => i !== idx))}>
-                      <Text style={styles.removeLine}>Remove line</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              ))}
-
-              {/* 3. Travel fee */}
-              <Text style={styles.boxTitle}>Travel fee — flat on mobile visits</Text>
-              <Text style={styles.small}>
-                Filled in from what the customer saw when booking. Clear it for members — their membership covers
-                travel.
+              <Text style={styles.invoiceTitle}>Get paid</Text>
+              <Text style={styles.muted}>
+                Show the customer the itemized receipt, have them sign, then take the card with Tap to Pay — or
+                record cash / Square app.
               </Text>
-              <TextInput
-                style={styles.input}
-                placeholder="0.00"
-                placeholderTextColor={colors.text.muted}
-                keyboardType="decimal-pad"
-                value={mileageFee}
-                onChangeText={setMileageFee}
-              />
-
-              {/* 4. Sales tax */}
-              <View style={styles.box}>
-                <View style={styles.spread}>
-                  <Text style={styles.boxLabel}>🏛️ Texas sales tax (8.25%)</Text>
-                  <Text style={[styles.mono, { color: '#fcd34d' }]}>+{money(salesTaxDollars)}</Text>
-                </View>
-                <View style={styles.row}>
-                  {(
-                    [
-                      ['parts', 'Parts'],
-                      ['total', 'Total'],
-                      ['none', 'Exempt'],
-                    ] as const
-                  ).map(([mode, label]) => (
-                    <TouchableOpacity
-                      key={mode}
-                      style={toggle(taxMode === mode, styles.toggleOrange)}
-                      onPress={() => setTaxMode(mode)}
-                    >
-                      <Text style={styles.toggleText}>{label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              {/* 5. Who bought the parts */}
-              {partsSubtotal > 0 && (
-                <View style={styles.box}>
-                  <View style={styles.spread}>
-                    <Text style={styles.boxLabel}>📦 Parts out-of-pocket</Text>
-                    <Text style={[styles.small, { color: colors.brand.orange }]}>
-                      {partsPurchasedBy === 'tech' ? '100% reimbursed to you' : 'Company supplied'}
-                    </Text>
-                  </View>
-                  <View style={styles.row}>
-                    <TouchableOpacity
-                      style={toggle(partsPurchasedBy === 'tech', styles.toggleGreen)}
-                      onPress={() => setPartsPurchasedBy('tech')}
-                    >
-                      <Text style={styles.toggleText}>I bought parts</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={toggle(partsPurchasedBy === 'company', styles.toggleOrange)}
-                      onPress={() => setPartsPurchasedBy('company')}
-                    >
-                      <Text style={styles.toggleText}>Company paid</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
-              <TextInput
-                style={[styles.input, { minHeight: 60, textAlignVertical: 'top' }]}
-                placeholder="Tech invoice notes (optional)"
-                placeholderTextColor={colors.text.muted}
-                multiline
-                value={techNotes}
-                onChangeText={setTechNotes}
-              />
-
-              {/* Summary */}
-              <View style={styles.summary}>
-                <Text style={styles.summaryTitle}>Itemized summary</Text>
-                <SummaryRow label="Diagnostic fee" value={includeDiagnosticFee ? money(quotedDollars) : 'WAIVED'} />
-                {laborSubtotal > 0 && <SummaryRow label="Labor subtotal" value={money(laborSubtotal)} />}
-                {partsSubtotal > 0 && (
-                  <SummaryRow
-                    label={`Parts subtotal (${partsPurchasedBy === 'tech' ? '100% to tech' : 'company paid'})`}
-                    value={money(partsSubtotal)}
-                  />
-                )}
-                {mileageTotal > 0 && <SummaryRow label="Mileage / travel" value={money(mileageTotal)} />}
-                {salesTaxDollars > 0 && <SummaryRow label="Texas sales tax (8.25%)" value={`+${money(salesTaxDollars)}`} />}
-                <View style={[styles.spread, styles.summaryTotal]}>
-                  <Text style={styles.summaryTotalLabel}>Customer total</Text>
-                  <Text style={[styles.summaryTotalLabel, { color: '#34d399' }]}>{money(chargeTotal)}</Text>
-                </View>
-                <View style={styles.spread}>
-                  <Text style={styles.payoutLabel}>👨‍🔧 Your payout</Text>
-                  <Text style={styles.payoutLabel}>{money(techPayout)} (+ tips)</Text>
-                </View>
-                {partsSubtotal > 0 && (
-                  <Text style={[styles.small, { textAlign: 'right' }]}>
-                    ({money(techLaborShare)} labor 70% + {money(techPartsShare)} parts{' '}
-                    {partsPurchasedBy === 'tech' ? '100%' : '0%'})
-                  </Text>
-                )}
-              </View>
-
-              <TouchableOpacity style={styles.agreeRow} onPress={() => setCustomerAgreed((v) => !v)} activeOpacity={0.8}>
-                <Text style={styles.agreeBox}>{customerAgreed ? '☑' : '☐'}</Text>
-                <Text style={styles.agreeText}>
-                  Customer agreed on site to {money(chargeTotal)} and paid it on Square
-                </Text>
+              <TouchableOpacity style={styles.completeBtn} disabled={busy} onPress={() => setPayOpen(true)}>
+                <Text style={styles.btnText}>💳 Get paid</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.completeBtn, (busy || !customerAgreed) && styles.dim]}
-                disabled={busy || !customerAgreed}
-                onPress={() => void handleCollected()}
-              >
-                <Text style={styles.btnText}>{busy ? 'Recording…' : `Collected ${money(chargeTotal)} — close job`}</Text>
+              <TouchableOpacity style={[styles.noShowBtn, busy && styles.dim]} disabled={busy} onPress={handleNoShow}>
+                <Text style={[styles.btnText, { color: '#fde68a' }]}>Customer no-show (no charge)</Text>
               </TouchableOpacity>
-              <View style={styles.row}>
-                <TouchableOpacity
-                  style={[styles.secondaryBtn, { flex: 1 }, busy && styles.dim]}
-                  disabled={busy}
-                  onPress={handleDiagnosticOnly}
-                >
-                  <Text style={styles.btnText}>Diag only (${quotedDollars.toFixed(0)})</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.noShowBtn, { flex: 1 }, busy && styles.dim]}
-                  disabled={busy}
-                  onPress={handleNoShow}
-                >
-                  <Text style={[styles.btnText, { color: '#fde68a' }]}>No-show (no charge)</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           )}
 
@@ -1097,7 +770,18 @@ export const JobsScreen: React.FC = () => {
             </View>
           )}
 
-          {jobPhase === 'complete' && <Text style={styles.doneText}>Job complete. Returning to board…</Text>}
+          {jobPhase === 'complete' && <Text style={styles.doneText}>Job complete ✓</Text>}
+
+          <GetPaidScreen
+            key={job.id}
+            job={job}
+            visible={payOpen}
+            onClose={() => {
+              setPayOpen(false);
+              if (jobPhase === 'complete') finishJob();
+            }}
+            onClosed={handlePaid}
+          />
 
           {jobPhase !== 'complete' && (
             <TouchableOpacity style={styles.cancelBtn} onPress={handleRelease}>
@@ -1140,13 +824,6 @@ export const JobsScreen: React.FC = () => {
     </ScrollView>
   );
 };
-
-const SummaryRow: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <View style={styles.spread}>
-    <Text style={styles.summaryLabel}>{label}</Text>
-    <Text style={styles.mono}>{value}</Text>
-  </View>
-);
 
 const btnBase = {
   paddingHorizontal: spacing.md,
@@ -1326,10 +1003,8 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   boxTitle: { color: colors.text.secondary, fontWeight: '800', fontSize: 11, textTransform: 'uppercase' },
-  boxLabel: { color: colors.text.secondary, fontWeight: '700', fontSize: 12, flex: 1 },
   hint: { color: '#7dd3fc', fontSize: 12, lineHeight: 17 },
   small: { color: colors.text.muted, fontSize: 10, lineHeight: 14 },
-  mono: { color: colors.text.primary, fontFamily: 'monospace', fontSize: 12, fontWeight: '700' },
   input: {
     backgroundColor: colors.bg.secondary,
     borderWidth: 1,
@@ -1355,63 +1030,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginTop: spacing.md,
   },
-  invoiceHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border.primary,
-    paddingBottom: spacing.sm,
-  },
   invoiceTitle: { color: colors.text.primary, fontSize: 12, fontWeight: '900', textTransform: 'uppercase' },
-  totalBadge: {
-    color: '#34d399',
-    fontSize: 13,
-    fontWeight: '900',
-    backgroundColor: 'rgba(16,185,129,0.1)',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    overflow: 'hidden',
-  },
-  toggle: {
-    flex: 1,
-    paddingVertical: 9,
-    borderRadius: borderRadius.sm,
-    borderWidth: 1,
-    borderColor: colors.border.primary,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    alignItems: 'center',
-  },
-  toggleGreen: { backgroundColor: '#059669', borderColor: '#10b981' },
-  toggleOrange: { backgroundColor: colors.brand.orange, borderColor: colors.brand.orange },
-  toggleText: { color: '#fff', fontSize: 11, fontWeight: '800' },
-  lineBlock: {
-    gap: 6,
-    padding: spacing.sm,
-    borderRadius: borderRadius.md,
-    borderWidth: 1,
-    borderColor: colors.border.primary,
-    backgroundColor: colors.bg.card,
-  },
-  addLine: { color: colors.brand.orange, fontWeight: '800', fontSize: 12 },
-  removeLine: { color: '#fca5a5', fontSize: 11, fontWeight: '700', textAlign: 'right' },
-  summary: {
-    borderWidth: 1,
-    borderColor: 'rgba(16,185,129,0.3)',
-    backgroundColor: 'rgba(16,185,129,0.05)',
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    gap: 6,
-  },
-  summaryTitle: { color: '#6ee7b7', fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
-  summaryLabel: { color: colors.text.secondary, fontSize: 12, flex: 1 },
-  summaryTotal: { borderTopWidth: 1, borderTopColor: colors.border.primary, paddingTop: 6 },
-  summaryTotalLabel: { color: colors.text.primary, fontSize: 14, fontWeight: '900' },
-  payoutLabel: { color: '#fdba74', fontSize: 12, fontWeight: '800' },
-  agreeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  agreeBox: { color: colors.brand.orange, fontSize: 18, lineHeight: 20 },
-  agreeText: { flex: 1, color: colors.text.secondary, fontSize: 12, lineHeight: 18 },
 
   offlineRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border.primary },
   claimRow: {
