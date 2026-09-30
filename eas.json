@@ -8,14 +8,16 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "SQUARE_APPLICATION_ID": "sandbox-sq0idb-6VLcVi4QWyfrakuBNT6qwA"
+        "SQUARE_APPLICATION_ID": "sandbox-sq0idb-6VLcVi4QWyfrakuBNT6qwA",
+        "SQUARE_TAP_TO_PAY_IPHONE": "1"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://qqyairzymqpkbfxobztx.supabase.co",
-        "SQUARE_APPLICATION_ID": "sandbox-sq0idb-6VLcVi4QWyfrakuBNT6qwA"
+        "SQUARE_APPLICATION_ID": "sandbox-sq0idb-6VLcVi4QWyfrakuBNT6qwA",
+        "SQUARE_TAP_TO_PAY_IPHONE": "1"
       }
     },
     "production": {
@@ -25,7 +27,8 @@
       },
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://qqyairzymqpkbfxobztx.supabase.co",
-        "SQUARE_APPLICATION_ID": "sandbox-sq0idb-6VLcVi4QWyfrakuBNT6qwA"
+        "SQUARE_APPLICATION_ID": "sandbox-sq0idb-6VLcVi4QWyfrakuBNT6qwA",
+        "SQUARE_TAP_TO_PAY_IPHONE": "1"
       }
     }
   },
