@@ -36,10 +36,13 @@ import { listOfflineJobPackets, type OfflineJobPacket } from '../lib/offlineJobP
 import { FORM_1099_NEC_NOTICE, FORM_1099_NEC_PLATFORM_NOTE } from '../content/taxForms';
 import { ContractorAgreementSignModal } from '../components/ContractorAgreementSignModal';
 import { VehicleInsuranceDisclosureModal } from '../components/VehicleInsuranceDisclosureModal';
+import { TapToPaySetupModal } from '../components/TapToPaySetupModal';
+import { useTapToPayEducation } from '../components/TapToPayEducationModal';
 import {
   ensureSquareAuthorized,
-  prepareTapToPayOnIphone,
+  iphoneTapToPayStatus,
   tapToPayOnIphoneEnabled,
+  type IphoneTapToPayStatus,
   showSquareSettings,
   squareLocationName,
   tapToPayAvailability,
@@ -76,6 +79,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
   const [squareLocation, setSquareLocation] = useState<string | null>(null);
   const [squareBusy, setSquareBusy] = useState(false);
   const cardPayments = tapToPayAvailability();
+  const iphoneTapToPay = Platform.OS === 'ios' && tapToPayOnIphoneEnabled();
+  const [ttpStatus, setTtpStatus] = useState<IphoneTapToPayStatus | null>(null);
+  const [ttpSetupOpen, setTtpSetupOpen] = useState(false);
+  const education = useTapToPayEducation();
 
   const refreshDocuments = useCallback(async () => {
     const [w, a, d] = await Promise.all([
@@ -198,9 +205,17 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
     }
   };
 
+  const refreshTapToPay = useCallback(() => {
+    if (!iphoneTapToPay) return;
+    void iphoneTapToPayStatus()
+      .then(setTtpStatus)
+      .catch(() => setTtpStatus(null));
+  }, [iphoneTapToPay]);
+
   useEffect(() => {
     if (cardPayments.available) void squareLocationName().then(setSquareLocation);
-  }, [cardPayments.available]);
+    refreshTapToPay();
+  }, [cardPayments.available, refreshTapToPay]);
 
   const runSquare = async (action: () => Promise<void>, done?: string) => {
     setSquareBusy(true);
@@ -333,31 +348,40 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
         </Text>
         {cardPayments.available && (
           <>
-            <TouchableOpacity
-              style={[styles.primaryButton, squareBusy && { opacity: 0.6 }]}
-              disabled={squareBusy}
-              onPress={() =>
-                void runSquare(
-                  async () => {
-                    await ensureSquareAuthorized();
-                    await prepareTapToPayOnIphone();
-                  },
-                  Platform.OS === 'ios'
-                    ? tapToPayOnIphoneEnabled()
-                      ? 'Tap to Pay on iPhone is ready.'
-                      : 'Connected. Pair a Square reader below to take cards — Tap to Pay on iPhone is coming soon.'
-                    : 'Connected. Tap to Pay is offered when this phone supports it (NFC on).'
-                )
-              }
-            >
-              <Text style={styles.primaryButtonText}>
-                {squareBusy
-                  ? 'Working…'
-                  : Platform.OS === 'ios' && tapToPayOnIphoneEnabled()
-                    ? 'Set up Tap to Pay on iPhone'
-                    : 'Connect to Square'}
-              </Text>
-            </TouchableOpacity>
+            {iphoneTapToPay ? (
+              <>
+                <Text style={[styles.statusText, { marginTop: spacing.sm }]}>
+                  {ttpStatus?.state === 'linked'
+                    ? 'Tap to Pay on iPhone: enabled on this iPhone.'
+                    : ttpStatus?.state === 'unsupported'
+                      ? `Tap to Pay on iPhone: ${ttpStatus.reason}`
+                      : 'Tap to Pay on iPhone: not enabled on this iPhone yet.'}
+                </Text>
+                {ttpStatus?.state !== 'linked' && ttpStatus?.state !== 'unsupported' && (
+                  <TouchableOpacity style={styles.primaryButton} onPress={() => setTtpSetupOpen(true)}>
+                    <Text style={styles.primaryButtonText}>Set up Tap to Pay on iPhone</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity style={styles.updateButton} onPress={education.open}>
+                  <Text style={styles.updateText}>How to use Tap to Pay on iPhone</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <TouchableOpacity
+                style={[styles.primaryButton, squareBusy && { opacity: 0.6 }]}
+                disabled={squareBusy}
+                onPress={() =>
+                  void runSquare(
+                    ensureSquareAuthorized,
+                    Platform.OS === 'ios'
+                      ? 'Connected. Pair a Square reader below to take cards.'
+                      : 'Connected. Tap to Pay is offered when this phone supports it (NFC on).'
+                  )
+                }
+              >
+                <Text style={styles.primaryButtonText}>{squareBusy ? 'Working…' : 'Connect to Square'}</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.updateButton}
               disabled={squareBusy}
@@ -622,6 +646,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refres
         <Text style={styles.logoutText}>🚪 Sign out of Adaptivity Tech</Text>
       </TouchableOpacity>
 
+      <TapToPaySetupModal
+        visible={ttpSetupOpen}
+        onClose={() => {
+          setTtpSetupOpen(false);
+          refreshTapToPay();
+        }}
+      />
+      {education.element}
       <ContractorAgreementSignModal
         visible={agreementOpen}
         onClose={() => setAgreementOpen(false)}

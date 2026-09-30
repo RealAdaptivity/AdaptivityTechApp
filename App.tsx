@@ -6,6 +6,7 @@ import { LoginScreen } from './src/screens/LoginScreen';
 import { JobsScreen } from './src/screens/JobsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { RequiredDocumentGates } from './src/components/RequiredDocumentGates';
+import { TapToPayLaunch } from './src/components/TapToPayLaunch';
 import { registerDevicePushToken } from './src/lib/pushNotifications';
 import { fetchMyDisplayName, supabase } from './src/lib/supabase';
 import { colors } from './src/theme/colors';
@@ -112,6 +113,7 @@ function TechShell({ onSignOut }: { onSignOut: () => Promise<void> }) {
       </View>
 
       <RequiredDocumentGates refreshKey={documentsVersion} onChanged={bumpDocuments} />
+      <TapToPayLaunch />
 
       <View style={styles.screenContainer}>
         {activeTab === 'jobs' && <JobsScreen />}
