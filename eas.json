@@ -15,6 +15,14 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://qqyairzymqpkbfxobztx.supabase.co",
+        "SQUARE_APPLICATION_ID": "sandbox-sq0idb-6VLcVi4QWyfrakuBNT6qwA"
+      }
+    },
+    "tap-to-pay-dev": {
+      "distribution": "internal",
+      "credentialsSource": "local",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://qqyairzymqpkbfxobztx.supabase.co",
         "SQUARE_APPLICATION_ID": "sandbox-sq0idb-6VLcVi4QWyfrakuBNT6qwA",
         "SQUARE_TAP_TO_PAY_IPHONE": "1"
       }
