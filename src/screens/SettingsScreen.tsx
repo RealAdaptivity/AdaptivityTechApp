@@ -1,31 +1,24 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, ActivityIndicator, AppState,
+  View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, AppState,
 } from 'react-native';
 import { colors, spacing, borderRadius } from '../theme/colors';
-import {
-  fetchTechConnectStatus,
-  openExpressDashboard,
-  openStripePayoutSetup,
-  resetStaleStripeConnectLink,
-  type TechConnectStatus,
-} from '../lib/stripePayouts';
-import { openExternalUrl } from '../lib/openExternalUrl';
-import { errorMessage } from '../lib/errorMessage';
 import {
   fetchMyJobCapacity,
   fetchMyTechSpecialties,
   fetchTechW9Status,
-  fetchTechYearToDateCompensation,
-  fetchContractorAgreementStatus,
-  markContractorAgreementSigned,
-  markTechW9Complete,
   updateMyJobCapacity,
   updateMyTechSpecialties,
   type TechJobCapacity,
   type TechW9Status,
-  type ContractorAgreementStatus,
 } from '../lib/supabase';
+import {
+  CONTRACTOR_AGREEMENT_VERSION,
+  fetchContractorAgreementStatus,
+  type ContractorAgreementStatus,
+} from '../lib/contractorAgreement';
+import { fetchDisclosureStatus, type DisclosureStatus } from '../lib/vehicleInsuranceDisclosure';
+import { getSignatureUrl } from '../lib/signatureUpload';
 import { TECH_SPECIALTIES, type TechSpecialty } from '../lib/techSpecialties';
 import {
   INVENTORY_SPECIALTY_KEYS,
@@ -40,39 +33,29 @@ import {
   type UnavailableWindow,
 } from '../lib/techUnavailable';
 import { listOfflineJobPackets, type OfflineJobPacket } from '../lib/offlineJobPacket';
+import { FORM_1099_NEC_NOTICE, FORM_1099_NEC_PLATFORM_NOTE } from '../content/taxForms';
+import { ContractorAgreementSignModal } from '../components/ContractorAgreementSignModal';
+import { VehicleInsuranceDisclosureModal } from '../components/VehicleInsuranceDisclosureModal';
+
+const PORTAL_URL = 'https://adaptivityperformance.com/portal';
 
 interface SettingsScreenProps {
   onLogout: () => void;
+  /** Bumped when a document is signed elsewhere (the banners above the tabs). */
+  refreshKey?: number;
+  onDocumentsChanged?: () => void;
 }
 
-function statusLabel(status: TechConnectStatus | null): string {
-  if (!status) return 'Sign in to view payout status';
-  if (status.readyForPayouts) return 'Ready for job payouts & instant cash out';
-  if (status.detailsSubmitted) return 'Stripe reviewing — finish any requested items';
-  if (status.accountId) return 'Finish Express onboarding to receive transfers';
-  return 'Not linked yet';
-}
-
-export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
-  const [bankName, setBankName] = useState('Link Stripe for instant debit payouts');
-  const [stripeExpressId, setStripeExpressId] = useState<string | null>(null);
-  const [connectStatus, setConnectStatus] = useState<TechConnectStatus | null>(null);
-  const [loadingStripe, setLoadingStripe] = useState(true);
-  const [linking, setLinking] = useState(false);
-  const [openingDash, setOpeningDash] = useState(false);
+export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout, refreshKey, onDocumentsChanged }) => {
   const [specialties, setSpecialties] = useState<TechSpecialty[]>(['mechanical']);
   const [savingSpecialties, setSavingSpecialties] = useState(false);
   const [jobCapacity, setJobCapacity] = useState<TechJobCapacity>('multi');
   const [savingCapacity, setSavingCapacity] = useState(false);
   const [w9, setW9] = useState<TechW9Status | null>(null);
-  const [w9Busy, setW9Busy] = useState(false);
   const [agreement, setAgreement] = useState<ContractorAgreementStatus | null>(null);
-  const [agreementBusy, setAgreementBusy] = useState(false);
-  const [ytd, setYtd] = useState<{
-    year: number;
-    totalDollars: number;
-    meetsNecThreshold: boolean;
-  } | null>(null);
+  const [disclosure, setDisclosure] = useState<DisclosureStatus | null>(null);
+  const [agreementOpen, setAgreementOpen] = useState(false);
+  const [disclosureOpen, setDisclosureOpen] = useState(false);
   const [inventorySpecialty, setInventorySpecialty] = useState(INVENTORY_SPECIALTY_KEYS[0] || 'brakes');
   const [checkedItems, setCheckedItems] = useState<string[]>([]);
   const [savingInventory, setSavingInventory] = useState(false);
@@ -82,7 +65,17 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
   const [unavailReason, setUnavailReason] = useState('');
   const [unavailBusy, setUnavailBusy] = useState(false);
   const [offlinePackets, setOfflinePackets] = useState<OfflineJobPacket[]>([]);
-  const taxYear = String(new Date().getFullYear());
+
+  const refreshDocuments = useCallback(async () => {
+    const [w, a, d] = await Promise.all([
+      fetchTechW9Status().catch(() => null),
+      fetchContractorAgreementStatus().catch(() => null),
+      fetchDisclosureStatus().catch(() => null),
+    ]);
+    setW9(w);
+    setAgreement(a);
+    setDisclosure(d);
+  }, []);
 
   const refreshUnavailable = useCallback(async () => {
     try {
@@ -92,37 +85,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     }
   }, []);
 
-  const loadInventory = useCallback(async (specialty: string) => {
-    try {
-      setCheckedItems(await loadInventoryChecks(specialty));
-    } catch {
-      setCheckedItems([]);
-    }
-  }, []);
+  useEffect(() => {
+    void refreshDocuments();
+  }, [refreshDocuments, refreshKey]);
 
   useEffect(() => {
-    void fetchMyTechSpecialties().then((list) =>
-      setSpecialties(list as TechSpecialty[])
-    );
+    void fetchMyTechSpecialties().then((list) => setSpecialties(list as TechSpecialty[]));
     void fetchMyJobCapacity().then(setJobCapacity);
-    void fetchTechW9Status().then(setW9);
-    void fetchContractorAgreementStatus().then(setAgreement);
-    void fetchTechYearToDateCompensation()
-      .then((r) =>
-        setYtd({
-          year: r.year,
-          totalDollars: r.totalDollars,
-          meetsNecThreshold: r.meetsNecThreshold,
-        })
-      )
-      .catch(() => setYtd(null));
     void refreshUnavailable();
     void listOfflineJobPackets().then(setOfflinePackets);
-  }, [refreshUnavailable]);
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') void refreshDocuments();
+    });
+    return () => sub.remove();
+  }, [refreshUnavailable, refreshDocuments]);
 
   useEffect(() => {
-    void loadInventory(inventorySpecialty);
-  }, [inventorySpecialty, loadInventory]);
+    void loadInventoryChecks(inventorySpecialty)
+      .then(setCheckedItems)
+      .catch(() => setCheckedItems([]));
+  }, [inventorySpecialty]);
 
   const saveJobCapacity = async (capacity: TechJobCapacity) => {
     setSavingCapacity(true);
@@ -132,17 +114,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
       Alert.alert(
         'Saved',
         capacity === 'multi'
-          ? 'Multi-job: you can claim several active dispatches.'
-          : 'Standalone: one active job at a time. Change anytime.'
+          ? 'Saved — you can claim multiple active jobs.'
+          : 'Saved — one active job at a time. Change anytime.'
       );
     } catch (e: unknown) {
-      const msg =
-        e instanceof Error
-          ? e.message
-          : typeof e === 'object' && e && 'message' in e
-            ? String((e as { message: unknown }).message)
-            : 'Unknown error';
-      Alert.alert('Could not save', msg);
+      Alert.alert('Could not save', e instanceof Error ? e.message : 'Could not save work style');
     } finally {
       setSavingCapacity(false);
     }
@@ -152,7 +128,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     setSpecialties((prev) => {
       if (prev.includes(id)) {
         const next = prev.filter((s) => s !== id);
-        return next.length ? next : prev;
+        return next.length ? next : ['mechanical'];
       }
       return [...prev, id];
     });
@@ -162,182 +138,184 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
     setSavingSpecialties(true);
     try {
       await updateMyTechSpecialties(specialties);
-      Alert.alert('Saved', 'Your trade specialties update which jobs you see on the board.');
+      Alert.alert('Saved', 'Specialties saved — job board filters to your trades.');
     } catch (e: unknown) {
-      Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
+      Alert.alert('Could not save', e instanceof Error ? e.message : 'Could not save specialties');
     } finally {
       setSavingSpecialties(false);
     }
   };
 
   const toggleInventoryItem = (item: string) => {
-    setCheckedItems((prev) =>
-      prev.includes(item) ? prev.filter((x) => x !== item) : [...prev, item]
-    );
+    setCheckedItems((prev) => (prev.includes(item) ? prev.filter((x) => x !== item) : [...prev, item]));
   };
 
   const saveInventory = async () => {
     setSavingInventory(true);
     try {
       await saveInventoryChecks(inventorySpecialty, checkedItems);
-      Alert.alert('Saved', 'Inventory checklist updated.');
+      Alert.alert('Saved', 'Checklist saved.');
     } catch (e: unknown) {
-      Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
+      Alert.alert('Could not save', e instanceof Error ? e.message : 'Save failed');
     } finally {
       setSavingInventory(false);
     }
   };
 
   const handleAddUnavailable = async () => {
-    if (!unavailStart.trim() || !unavailEnd.trim()) {
-      Alert.alert('Missing times', 'Enter start and end as ISO dates (e.g. 2026-07-29T09:00:00).');
+    const start = new Date(unavailStart.trim().replace(' ', 'T'));
+    const end = new Date(unavailEnd.trim().replace(' ', 'T'));
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      Alert.alert('Check the times', 'Enter start and end like 2026-10-03 09:00.');
+      return;
+    }
+    if (end <= start) {
+      Alert.alert('Check the times', 'The end has to be after the start.');
       return;
     }
     setUnavailBusy(true);
     try {
-      await addUnavailableWindow({
-        startsAt: new Date(unavailStart.trim()).toISOString(),
-        endsAt: new Date(unavailEnd.trim()).toISOString(),
-        reason: unavailReason,
-      });
+      await addUnavailableWindow({ startsAt: start.toISOString(), endsAt: end.toISOString(), reason: unavailReason });
       setUnavailStart('');
       setUnavailEnd('');
       setUnavailReason('');
       await refreshUnavailable();
     } catch (e: unknown) {
-      Alert.alert('Could not add', e instanceof Error ? e.message : 'Unknown error');
+      Alert.alert('Could not add window', e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setUnavailBusy(false);
     }
   };
 
-  const refreshStripe = useCallback(async () => {
-    setLoadingStripe(true);
-    try {
-      const status = await fetchTechConnectStatus();
-      setConnectStatus(status);
-      const id = status?.accountId?.startsWith('acct_') ? status.accountId : null;
-      setStripeExpressId(id);
-      if (status?.hasDebitCardForInstant) {
-        setBankName('Instant debit card on file');
-      } else if (status?.readyForPayouts) {
-        setBankName('Bank linked — add debit card in Stripe for Instant');
-      } else if (id) {
-        setBankName('Complete Stripe Express to unlock payouts');
-      }
-      setW9(await fetchTechW9Status());
-    } catch {
-      setConnectStatus(null);
-      setStripeExpressId(null);
-    } finally {
-      setLoadingStripe(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshStripe();
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refreshStripe();
-    });
-    return () => sub.remove();
-  }, [refreshStripe]);
-
-  const handleStripeLink = async () => {
-    setLinking(true);
-    try {
-      const { onboardingUrl } = await openStripePayoutSetup();
-      await openExternalUrl(onboardingUrl, 'Stripe onboarding');
-      await refreshStripe();
-    } catch (e: unknown) {
-      const msg = errorMessage(e, 'Could not open Stripe onboarding.');
-      Alert.alert(
-        'Stripe setup',
-        /technician profile required/i.test(msg)
-          ? 'This login is not an approved tech account. Use your approved technician login.'
-          : msg
-      );
-    } finally {
-      setLinking(false);
-    }
-  };
-
-  const handleResetStripeLink = () => {
-    Alert.alert(
-      'Reset Stripe link',
-      'Clears a saved test-mode Connect account so you can start Live onboarding. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              setLinking(true);
-              try {
-                await resetStaleStripeConnectLink();
-                setStripeExpressId(null);
-                setConnectStatus(null);
-                setBankName('Link Stripe for instant debit payouts');
-                await refreshStripe();
-                Alert.alert('Reset done', 'Tap Connect Stripe Express to start Live onboarding.');
-              } catch (e: unknown) {
-                Alert.alert(
-                  'Reset failed',
-                  e instanceof Error ? e.message : 'Could not reset Stripe link.'
-                );
-              } finally {
-                setLinking(false);
-              }
-            })();
-          },
-        },
-      ]
-    );
-  };
-
-  const handleExpressDashboard = async () => {
-    setOpeningDash(true);
-    try {
-      const result = await openExpressDashboard();
-      await openExternalUrl(result.loginUrl, 'Stripe Express');
-      if (result.openedOnboarding) {
-        Alert.alert(
-          'Finish onboarding first',
-          'No Live Express account yet — opened Stripe setup instead. Complete it, then come back for the Dashboard.'
-        );
-      }
-      await refreshStripe();
-    } catch (e: unknown) {
-      Alert.alert(
-        'Express Dashboard',
-        errorMessage(e, 'Could not open Express Dashboard. Tap Connect Stripe Express first.')
-      );
-    } finally {
-      setOpeningDash(false);
-    }
+  const viewSignature = async (path: string | null) => {
+    const url = await getSignatureUrl(path);
+    if (url) void Linking.openURL(url);
+    else Alert.alert('Not available', 'Could not open the signature on file.');
   };
 
   const handleLogout = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out of Adaptivity Tech Dispatch?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign Out', style: 'destructive', onPress: onLogout },
-      ]
-    );
+    Alert.alert('Sign Out', 'Are you sure you want to sign out of Adaptivity Tech Dispatch?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: onLogout },
+    ]);
   };
 
+  const agreementCurrent = Boolean(agreement?.signed && agreement.signaturePath);
+  const agreementStale = Boolean(agreement?.signedAt) && agreement?.agreementVersion !== CONTRACTOR_AGREEMENT_VERSION;
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      {/* Required documents */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>📜</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>Independent Contractor Agreement</Text>
+            <Text style={styles.cardSubtitle}>
+              Digitally sign the 1099 contractor terms (liability, workers’ comp, tax, payouts). Required before
+              claiming your first job. We store your name, signature image, and timestamp for Adaptivity records.
+            </Text>
+          </View>
+        </View>
+        <Text style={[styles.statusText, { color: agreementCurrent ? colors.status.success : '#fcd34d' }]}>
+          {agreement === null
+            ? 'Checking agreement status…'
+            : agreementCurrent
+              ? `Signed${agreement.signerName ? ` by ${agreement.signerName}` : ''}${
+                  agreement.signedAt ? ` · ${new Date(agreement.signedAt).toLocaleString()}` : ''
+                } · ${agreement.agreementVersion}`
+              : agreementStale
+                ? `The agreement has been updated since you signed${
+                    agreement.agreementVersion ? ` (you signed ${agreement.agreementVersion})` : ''
+                  }. Read and sign the current version to keep claiming jobs.`
+                : agreement.signedAt && !agreement.signaturePath
+                  ? 'Accepted earlier without a drawn signature. Complete the digital signature so we have a signed copy on file.'
+                  : 'Not signed yet. Read the agreement, type your legal name, draw your signature, and save.'}
+        </Text>
+        {!agreementCurrent && (
+          <TouchableOpacity style={styles.primaryButton} onPress={() => setAgreementOpen(true)}>
+            <Text style={styles.primaryButtonText}>
+              {agreementStale ? 'Review and sign the updated agreement →' : 'Sign agreement digitally →'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        {!!agreement?.signaturePath && (
+          <TouchableOpacity style={styles.updateButton} onPress={() => void viewSignature(agreement.signaturePath)}>
+            <Text style={styles.updateText}>View my signature on file</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={{ marginTop: spacing.sm }} onPress={() => void Linking.openURL(PORTAL_URL)}>
+          <Text style={styles.linkText}>Print / save the signed PDF from the web portal</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>🚗</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>Vehicle insurance disclosure</Text>
+            <Text style={styles.cardSubtitle}>
+              Your personal vehicle, plate, insurer and policy — required before field dispatch and again whenever
+              the policy renews.
+            </Text>
+          </View>
+        </View>
+        <Text style={[styles.statusText, { color: disclosure?.current ? colors.status.success : '#fcd34d' }]}>
+          {disclosure === null
+            ? 'Checking disclosure status…'
+            : disclosure.current
+              ? `On file · ${disclosure.values?.vehicleDescription || 'vehicle'} · ${
+                  disclosure.values?.insuranceCarrier || 'carrier'
+                } · expires ${disclosure.policyExpiresOn}`
+              : disclosure.policyExpired
+                ? `The policy you disclosed expired on ${disclosure.policyExpiresOn}. File your renewed policy.`
+                : disclosure.staleVersion
+                  ? 'The disclosure has been updated since you signed it. Sign the current version.'
+                  : 'Not filed yet.'}
+        </Text>
+        <TouchableOpacity
+          style={disclosure?.current ? styles.updateButton : styles.primaryButton}
+          onPress={() => setDisclosureOpen(true)}
+        >
+          <Text style={disclosure?.current ? styles.updateText : styles.primaryButtonText}>
+            {disclosure?.signedAt ? 'Update my insurance details →' : 'Read & sign the disclosure →'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>🧾</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>IRS Form W-9 (required before first job)</Text>
+            <Text style={styles.cardSubtitle}>
+              Every mechanic must give Adaptivity a completed Form W-9 before claiming a dispatch, so we can issue
+              1099s. Download the blank form, fill it in, and hand or send it to dispatch. Your Social Security
+              number is never entered into this app and is not stored in our database.
+            </Text>
+          </View>
+        </View>
+        <Text style={[styles.statusText, { color: w9?.completed ? colors.status.success : '#fcd34d' }]}>
+          {w9 === null
+            ? 'Checking W-9 status…'
+            : w9.completed
+              ? `W-9 / tax ID on file${w9.completedAt ? ` · ${new Date(w9.completedAt).toLocaleDateString()}` : ''}. You can claim jobs.`
+              : 'Not on file yet. Send your completed W-9 to dispatch — they record it once received. It cannot be self-certified from this app.'}
+        </Text>
+        <TouchableOpacity
+          style={{ marginTop: spacing.sm }}
+          onPress={() => void Linking.openURL('https://www.irs.gov/pub/irs-pdf/fw9.pdf')}
+        >
+          <Text style={styles.linkText}>Download blank IRS Form W-9 (PDF)</Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardEmoji}>🛠️</Text>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>Your trade specialties</Text>
-            <Text style={styles.cardSubtitle}>
-              Pick every trade you cover — mechanical, tires, glass, body, detail, mods, audio, tint, wrap/PPF, performance. Jobs match your trades.
-            </Text>
+            <Text style={styles.cardSubtitle}>Pick every trade you cover. Available jobs match these specialties.</Text>
           </View>
         </View>
         <View style={styles.specialtyGrid}>
@@ -358,29 +336,56 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
             );
           })}
         </View>
-        <TouchableOpacity
-          style={styles.updateButton}
-          onPress={() => void saveSpecialties()}
-          disabled={savingSpecialties}
-        >
-          <Text style={styles.updateText}>
-            {savingSpecialties ? 'Saving…' : 'Save specialties'}
-          </Text>
+        <TouchableOpacity style={styles.primaryButton} onPress={() => void saveSpecialties()} disabled={savingSpecialties}>
+          <Text style={styles.primaryButtonText}>{savingSpecialties ? 'Saving…' : 'Save specialties'}</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardEmoji}>🧰</Text>
-          <View>
-            <Text style={styles.cardTitle}>Van inventory checklist</Text>
+          <Text style={styles.cardEmoji}>📋</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>Work style</Text>
             <Text style={styles.cardSubtitle}>
-              Check off stock for each specialty before you roll out.
+              Choose whether you take multiple jobs or stay standalone on one job. You can change this anytime.
             </Text>
           </View>
         </View>
+        {(
+          [
+            ['multi', 'Multi-job', 'Claim several active dispatches at once'],
+            ['standalone', 'Standalone (single)', 'One active job until you finish or release it'],
+          ] as const
+        ).map(([value, title, detail]) => {
+          const on = jobCapacity === value;
+          return (
+            <TouchableOpacity
+              key={value}
+              style={[styles.inventoryRow, on && styles.inventoryRowOn]}
+              onPress={() => void saveJobCapacity(value)}
+              disabled={savingCapacity}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.taxTitle, on && { color: colors.brand.orange }]}>
+                {on ? '✓ ' : ''}
+                {title}
+              </Text>
+              <Text style={styles.taxSubtitle}>{detail}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardEmoji}>🧰</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>Inventory checklist</Text>
+            <Text style={styles.cardSubtitle}>Van stock checklist by specialty — synced to your account.</Text>
+          </View>
+        </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
-          <View style={styles.specialtyGrid}>
+          <View style={[styles.specialtyGrid, { flexWrap: 'nowrap' }]}>
             {INVENTORY_SPECIALTY_KEYS.map((key) => {
               const on = inventorySpecialty === key;
               return (
@@ -414,25 +419,17 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
             </TouchableOpacity>
           );
         })}
-        <TouchableOpacity
-          style={styles.updateButton}
-          onPress={() => void saveInventory()}
-          disabled={savingInventory}
-        >
-          <Text style={styles.updateText}>
-            {savingInventory ? 'Saving…' : 'Save inventory check'}
-          </Text>
+        <TouchableOpacity style={styles.updateButton} onPress={() => void saveInventory()} disabled={savingInventory}>
+          <Text style={styles.updateText}>{savingInventory ? 'Saving…' : 'Save checklist'}</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardEmoji}>🚫</Text>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>Unavailable windows</Text>
-            <Text style={styles.cardSubtitle}>
-              Block times you cannot take jobs (ISO datetime, e.g. 2026-07-29T09:00).
-            </Text>
+            <Text style={styles.cardSubtitle}>Block times you cannot take jobs (vacation, shop day, etc.).</Text>
           </View>
         </View>
         {unavailable.length === 0 ? (
@@ -447,39 +444,38 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
                 {!!w.reason && <Text style={styles.taxSubtitle}>{w.reason}</Text>}
               </View>
               <TouchableOpacity
-                onPress={() => {
-                  void (async () => {
-                    try {
-                      await removeUnavailableWindow(w.id);
-                      await refreshUnavailable();
-                    } catch (e: unknown) {
-                      Alert.alert('Remove failed', e instanceof Error ? e.message : 'Unknown error');
-                    }
-                  })();
-                }}
+                onPress={() =>
+                  void removeUnavailableWindow(w.id)
+                    .then(refreshUnavailable)
+                    .catch((e: unknown) =>
+                      Alert.alert('Remove failed', e instanceof Error ? e.message : 'Unknown error')
+                    )
+                }
               >
                 <Text style={[styles.linkText, { color: colors.status.error }]}>Remove</Text>
               </TouchableOpacity>
             </View>
           ))
         )}
-        <Text style={styles.inputLabel}>Starts at</Text>
+        <Text style={styles.inputLabel}>Starts</Text>
         <TextInput
           style={styles.input}
           value={unavailStart}
           onChangeText={setUnavailStart}
-          placeholder="2026-07-29T09:00"
+          placeholder="2026-10-03 09:00"
           placeholderTextColor={colors.text.muted}
           autoCapitalize="none"
+          keyboardType="numbers-and-punctuation"
         />
-        <Text style={styles.inputLabel}>Ends at</Text>
+        <Text style={styles.inputLabel}>Ends</Text>
         <TextInput
           style={styles.input}
           value={unavailEnd}
           onChangeText={setUnavailEnd}
-          placeholder="2026-07-29T17:00"
+          placeholder="2026-10-03 17:00"
           placeholderTextColor={colors.text.muted}
           autoCapitalize="none"
+          keyboardType="numbers-and-punctuation"
         />
         <Text style={styles.inputLabel}>Reason (optional)</Text>
         <TextInput
@@ -489,12 +485,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
           placeholder="Vacation, shop day…"
           placeholderTextColor={colors.text.muted}
         />
-        <TouchableOpacity
-          style={styles.updateButton}
-          disabled={unavailBusy}
-          onPress={() => void handleAddUnavailable()}
-        >
-          <Text style={styles.updateText}>{unavailBusy ? 'Saving…' : 'Add window'}</Text>
+        <TouchableOpacity style={styles.updateButton} disabled={unavailBusy} onPress={() => void handleAddUnavailable()}>
+          <Text style={styles.updateText}>{unavailBusy ? 'Saving…' : 'Add unavailable window'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -502,11 +494,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardEmoji}>📦</Text>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>Offline packet</Text>
-              <Text style={styles.cardSubtitle}>
-                Cached active jobs for when the board is unreachable.
-              </Text>
+              <Text style={styles.cardSubtitle}>Cached active jobs for when the board is unreachable.</Text>
             </View>
           </View>
           {offlinePackets.map((p) => (
@@ -519,9 +509,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
                   {p.vehicle} · {p.address}
                 </Text>
                 <Text style={styles.taxSubtitle}>{p.phone}</Text>
-                {p.services.length > 0 && (
-                  <Text style={styles.taxSubtitle}>{p.services.join(' · ')}</Text>
-                )}
               </View>
             </View>
           ))}
@@ -530,261 +517,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
 
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardEmoji}>📋</Text>
-          <View>
-            <Text style={styles.cardTitle}>Work style</Text>
-            <Text style={styles.cardSubtitle}>
-              Multi-job = several active dispatches. Standalone = one job at a time. Change anytime.
-            </Text>
-          </View>
-        </View>
-        <TouchableOpacity
-          style={[styles.specialtyChip, jobCapacity === 'multi' && styles.specialtyChipOn, { marginBottom: 8 }]}
-          onPress={() => void saveJobCapacity('multi')}
-          disabled={savingCapacity}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.specialtyChipText, jobCapacity === 'multi' && styles.specialtyChipTextOn]}>
-            {jobCapacity === 'multi' ? '✓ ' : ''}Multi-job
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.specialtyChip, jobCapacity === 'standalone' && styles.specialtyChipOn]}
-          onPress={() => void saveJobCapacity('standalone')}
-          disabled={savingCapacity}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.specialtyChipText, jobCapacity === 'standalone' && styles.specialtyChipTextOn]}>
-            {jobCapacity === 'standalone' ? '✓ ' : ''}Standalone (single)
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardEmoji}>🧾</Text>
-          <View>
-            <Text style={styles.cardTitle}>IRS Form W-9 (required)</Text>
-            <Text style={styles.cardSubtitle}>
-              Submit your SSN or EIN in Stripe Express before claiming your first job. We use that for 1099s and do not store your SSN in our database.
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.statusText}>
-          {w9?.completed
-            ? `W-9 / tax ID on file${w9.completedAt ? ` · ${new Date(w9.completedAt).toLocaleDateString()}` : ''}`
-            : 'Not complete — finish Stripe tax ID, then mark below.'}
-        </Text>
-        {!w9?.completed && (
-          <TouchableOpacity
-            style={[styles.primaryButton, { marginTop: spacing.md }]}
-            disabled={w9Busy || !(connectStatus?.detailsSubmitted || connectStatus?.taxIdProvided)}
-            onPress={() => {
-              void (async () => {
-                setW9Busy(true);
-                try {
-                  await markTechW9Complete();
-                  setW9(await fetchTechW9Status());
-                  Alert.alert('W-9 complete', 'You can claim dispatch jobs now.');
-                } catch (e: unknown) {
-                  Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
-                } finally {
-                  setW9Busy(false);
-                }
-              })();
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.primaryButtonText}>
-              {w9Busy ? 'Saving…' : 'I submitted tax ID in Stripe — mark W-9 complete'}
-            </Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity
-          style={{ marginTop: spacing.sm }}
-          onPress={() => void Linking.openURL('https://www.irs.gov/pub/irs-pdf/fw9.pdf')}
-        >
-          <Text style={styles.linkText}>Download blank IRS Form W-9 (PDF)</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardEmoji}>📜</Text>
-          <View>
-            <Text style={styles.cardTitle}>Contractor Agreement (required)</Text>
-            <Text style={styles.cardSubtitle}>
-              Accept 1099 contractor terms (liability, workers’ comp notice, tax forms, payouts) before claiming jobs.
-              Print/save the PDF from the web tech portal Settings anytime.
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.statusText}>
-          {agreement?.signed
-            ? `Accepted${agreement.signedAt ? ` · ${new Date(agreement.signedAt).toLocaleDateString()}` : ''}`
-            : 'Not accepted yet'}
-        </Text>
-        {!agreement?.signed && (
-          <TouchableOpacity
-            style={[styles.primaryButton, { marginTop: spacing.md }]}
-            disabled={agreementBusy}
-            onPress={() => {
-              Alert.alert(
-                'Accept agreement?',
-                'You are an independent contractor (1099), not an employee. You are responsible for liability/insurance on customer vehicles, Texas workers’ comp is not provided by Adaptivity, and you must complete W-9 via Stripe. Accept to continue.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'I accept',
-                    onPress: () => {
-                      void (async () => {
-                        setAgreementBusy(true);
-                        try {
-                          const signedAt = await markContractorAgreementSigned();
-                          setAgreement({ signed: true, signedAt });
-                          Alert.alert('Accepted', 'You can claim jobs once W-9 is also complete.');
-                        } catch (e: unknown) {
-                          Alert.alert('Could not save', e instanceof Error ? e.message : 'Unknown error');
-                        } finally {
-                          setAgreementBusy(false);
-                        }
-                      })();
-                    },
-                  },
-                ]
-              );
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.primaryButtonText}>
-              {agreementBusy ? 'Saving…' : 'I accept the Independent Contractor Agreement'}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardEmoji}>🏦</Text>
-          <View>
-            <Text style={styles.cardTitle}>Direct Deposit & Instant Payouts</Text>
-            <Text style={styles.cardSubtitle}>
-              Standard: bank deposit in ~2 business days, no Instant fee. Instant: debit card in ~30 minutes, Stripe ~1% fee (min ~$0.50). Bank setup alone doesn’t add a debit card — open Express Dashboard → payout settings → Add debit card for Instant.
-            </Text>
-          </View>
-        </View>
-
-        <Text style={styles.inputLabel}>Payout status</Text>
-        <View style={styles.readonlyInput}>
-          {loadingStripe ? (
-            <ActivityIndicator color={colors.brand.orange} />
-          ) : (
-            <Text style={styles.statusText}>{statusLabel(connectStatus)}</Text>
-          )}
-        </View>
-
-        <Text style={styles.inputLabel}>Payout account label</Text>
-        <TextInput
-          style={styles.input}
-          value={bankName}
-          onChangeText={setBankName}
-          placeholderTextColor={colors.text.muted}
-        />
-
-        <Text style={styles.inputLabel}>Stripe Express Account ID</Text>
-        <View style={styles.readonlyInput}>
-          {loadingStripe ? (
-            <ActivityIndicator color={colors.brand.orange} />
-          ) : (
-            <Text style={styles.readonlyText}>{stripeExpressId ?? 'Not linked yet'}</Text>
-          )}
-        </View>
-
-        {stripeExpressId && connectStatus?.detailsSubmitted ? (
-          <TouchableOpacity
-            style={styles.primaryButton}
-            activeOpacity={0.8}
-            onPress={handleExpressDashboard}
-            disabled={openingDash}
-          >
-            {openingDash ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.primaryButtonText}>
-                {connectStatus?.hasDebitCardForInstant
-                  ? 'Open Express Dashboard →'
-                  : 'Open Express Dashboard → add debit card'}
-              </Text>
-            )}
-          </TouchableOpacity>
-        ) : null}
-
-        <TouchableOpacity
-          style={styles.updateButton}
-          activeOpacity={0.8}
-          onPress={handleStripeLink}
-          disabled={linking}
-        >
-          {linking ? (
-            <ActivityIndicator color={colors.brand.orange} />
-          ) : (
-            <Text style={styles.updateText}>
-              {stripeExpressId ? 'Update identity / bank setup →' : 'Connect Stripe Express →'}
-            </Text>
-          )}
-        </TouchableOpacity>
-        {!connectStatus?.readyForPayouts && (
-          <TouchableOpacity
-            style={[styles.updateButton, { marginTop: spacing.sm }]}
-            activeOpacity={0.8}
-            onPress={handleResetStripeLink}
-            disabled={linking}
-          >
-            <Text style={styles.updateText}>Reset Stripe link (test→Live)</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
           <Text style={styles.cardEmoji}>📄</Text>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>Form 1099-NEC</Text>
-            <Text style={styles.cardSubtitle}>
-              If Adaptivity pays you $600 or more in a calendar year, we must file Form 1099-NEC with the IRS and send you a copy by January 31 of the following year.
-            </Text>
+            <Text style={styles.cardSubtitle}>{FORM_1099_NEC_NOTICE}</Text>
           </View>
         </View>
-
-        <View style={styles.taxRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.taxTitle}>{taxYear} YTD compensation</Text>
-            <Text style={styles.taxSubtitle}>Your 70% job share toward the $600 threshold</Text>
-          </View>
-          <Text style={styles.taxTitle}>
-            {ytd ? `$${ytd.totalDollars.toFixed(2)}` : '—'}
-          </Text>
-        </View>
-        <Text style={[styles.taxSubtitle, { marginBottom: spacing.md }]}>
-          {ytd?.meetsNecThreshold
-            ? 'At or above $600 — Adaptivity will file 1099-NEC and furnish your copy by Jan 31 next year.'
-            : 'Under $600 so far this year — no 1099-NEC until the threshold is met.'}
-        </Text>
-
-        <View style={styles.taxRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.taxTitle}>W-9 / tax ID</Text>
-            <Text
-              style={[
-                styles.taxSubtitle,
-                { color: w9?.completed ? colors.status.success : colors.brand.orange },
-              ]}
-            >
-              {w9?.completed ? 'On file via Stripe Express' : 'Required before first job — see section above'}
-            </Text>
-          </View>
-        </View>
-
+        <Text style={styles.taxSubtitle}>{FORM_1099_NEC_PLATFORM_NOTE}</Text>
         <TouchableOpacity
           style={{ marginTop: spacing.sm }}
           onPress={() => void Linking.openURL('https://www.irs.gov/forms-pubs/about-form-1099-nec')}
@@ -793,32 +532,34 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onLogout }) => {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardEmoji}>🚛</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.cardTitle}>Technician Rig Audit Status</Text>
-          </View>
-          <View style={styles.aseBadge}>
-            <Text style={styles.aseBadgeText}>ASE Master Verified</Text>
-          </View>
-        </View>
-
-        <Text style={styles.rigDetail}>• Mobile Unit: 2023 Ford F-250 Super Duty (Rig #4)</Text>
-        <Text style={styles.rigDetail}>• 8-Point Tool Audit: OBD-II Scanner, Hydraulic Jacks, Torque Wrenches</Text>
-        <Text style={styles.rigDetail}>• Coverage Area: Justin, Northlake, Argyle, Haslet & DFW Radius</Text>
-      </View>
-
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.8}>
-        <Text style={styles.logoutText}>🚪 Sign Out of Adaptivity Tech</Text>
+        <Text style={styles.logoutText}>🚪 Sign out of Adaptivity Tech</Text>
       </TouchableOpacity>
+
+      <ContractorAgreementSignModal
+        visible={agreementOpen}
+        onClose={() => setAgreementOpen(false)}
+        onSigned={() => {
+          void refreshDocuments();
+          onDocumentsChanged?.();
+        }}
+      />
+      <VehicleInsuranceDisclosureModal
+        visible={disclosureOpen}
+        onClose={() => setDisclosureOpen(false)}
+        initialValues={disclosure?.values}
+        onSigned={() => {
+          void refreshDocuments();
+          onDocumentsChanged?.();
+        }}
+      />
     </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.primary },
-  content: { padding: spacing.lg, paddingBottom: 100 },
+  content: { padding: spacing.lg, paddingBottom: spacing["3xl"] },
   card: {
     backgroundColor: colors.bg.card,
     borderRadius: borderRadius.lg,
@@ -831,7 +572,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.md,
-    marginBottom: spacing.xl,
+    marginBottom: spacing.md,
   },
   cardEmoji: { fontSize: 24 },
   cardTitle: { fontSize: 16, fontWeight: '700', color: colors.text.primary },

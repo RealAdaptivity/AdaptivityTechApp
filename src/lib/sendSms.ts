@@ -49,6 +49,7 @@ export async function sendChargeReceiptSmsAuto(opts: {
   kind: 'charge' | 'diagnostic_only' | 'no_show';
   lines?: Parameters<typeof buildChargeReceiptMessage>[0]['lines'];
   diagnosticDollars?: number;
+  salesTaxDollars?: number;
 }): Promise<SendBookingSmsResult> {
   void buildChargeReceiptMessage(opts);
   const opened = await openChargeReceiptSms(opts);
