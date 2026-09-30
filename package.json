@@ -15,6 +15,7 @@
     "expo-status-bar": "~57.0.1",
     "firebase": "^12.17.0",
     "mobile-payments-sdk-react-native": "2026.8.1",
+    "qrcode": "^1.5.4",
     "react": "19.2.3",
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
@@ -23,6 +24,7 @@
     "react-native-view-shot": "5.1.0"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@types/react": "~19.2.2",
     "typescript": "~6.0.3"
   },

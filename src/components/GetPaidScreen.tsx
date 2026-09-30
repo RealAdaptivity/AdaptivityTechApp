@@ -32,6 +32,8 @@ import {
   type CloseOutOptions,
   type ReceiptSendResult,
 } from '../lib/jobPayments';
+import { fetchZelleConfig, type ZelleConfig } from '../lib/zelle';
+import { QrCode } from './QrCode';
 import {
   iphoneTapToPayStatus,
   phoneTapToPayOffered,
@@ -56,11 +58,27 @@ type Props = {
   onClosed: () => void;
 };
 
+type PayMethod = 'card' | 'zelle' | 'cash';
+type OfflineMethod = 'zelle' | 'cash' | 'square_app';
+
+const METHOD_TAB: Record<PayMethod, string> = { card: 'Card', zelle: 'Zelle', cash: 'Cash' };
+const METHOD_LABEL: Record<PayMethod, string> = { card: 'by card', zelle: 'by Zelle', cash: 'in cash' };
+const OFFLINE_COPY: Record<OfflineMethod, { title: string; confirm: string }> = {
+  zelle: { title: 'Zelle payment received?', confirm: 'Zelle received' },
+  cash: { title: 'Cash received?', confirm: 'Cash received' },
+  square_app: { title: 'Paid on the Square app?', confirm: 'Customer paid' },
+};
+
+function zelleName(z: ZelleConfig | null): string {
+  return z?.displayName || 'Adaptivity Performance';
+}
+
 /**
  * Get paid — the same close-out as the web portal. The customer checks the
- * itemized receipt and signs on the tech's phone, then pays by card with Tap
- * to Pay, or in cash / on the Square app. Either way the database adds the
- * lines up itself and stores them with the signature.
+ * itemized receipt and signs on the tech's phone, then pays by card (Tap to
+ * Pay / Square reader), by Zelle (scanning the company QR code) or in cash.
+ * Either way the database adds the lines up itself and stores them with the
+ * signature and how it was paid.
  */
 export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed }) => {
   const diagnosticFeeCents = job.holdAmountCents ?? DIAGNOSTIC_FEE_DOLLARS * 100;
@@ -79,7 +97,9 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
   const [drawing, setDrawing] = useState(false);
   const [busy, setBusy] = useState<null | 'card' | 'other'>(null);
   const [error, setError] = useState<string | null>(null);
-  const [closed, setClosed] = useState<{ totalCents: number; payoutCents: number; byCard: boolean } | null>(null);
+  const [payMethod, setPayMethod] = useState<PayMethod>('card');
+  const [zelle, setZelle] = useState<ZelleConfig | null>(null);
+  const [closed, setClosed] = useState<{ totalCents: number; payoutCents: number; method: PayMethod } | null>(null);
   // Once a card has been charged the amounts are locked: closing may be
   // retried, but the customer is never charged a second time.
   const [charged, setCharged] = useState<{ paymentId: string; signaturePath: string } | null>(null);
@@ -87,6 +107,9 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
   useEffect(() => {
     if (!visible) return;
     setError(null);
+    void fetchZelleConfig()
+      .then(setZelle)
+      .catch(() => setZelle({ qrPayload: null, recipient: null, displayName: null }));
   }, [visible]);
 
   const card = tapToPayAvailability();
@@ -161,7 +184,7 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
         setCharged(current);
       }
       const saved = await recordSquarePayment(job.id, current.paymentId, closeOut, options(current.signaturePath));
-      setClosed({ totalCents: saved.totalCents, payoutCents: saved.techPayoutCents, byCard: true });
+      setClosed({ totalCents: saved.totalCents, payoutCents: saved.techPayoutCents, method: 'card' });
       onClosed();
     } catch (e) {
       if (e instanceof TapToPayNotLinkedError) {
@@ -174,22 +197,39 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
     }
   };
 
-  const paidAnotherWay = () => {
-    if (problem || busy || charged) return;
+  /** Zelle or cash: the tech confirms the money arrived, the database records it. */
+  const confirmPaid = (method: OfflineMethod) => {
+    if (busy || charged) return;
+    if (problem) {
+      Alert.alert('Before taking payment', problem);
+      return;
+    }
+    const amount = formatCents(closeOut.totalCents);
     Alert.alert(
-      'Paid another way?',
-      `Confirm the customer paid ${formatCents(closeOut.totalCents)} in cash or on the Square app.`,
+      OFFLINE_COPY[method].title,
+      method === 'zelle'
+        ? `Only confirm once the customer shows you the Zelle payment of ${amount} was sent to ${zelleName(zelle)}.`
+        : method === 'cash'
+          ? `Confirm you collected ${amount} in cash.`
+          : `Confirm the customer paid ${amount} on the Square app.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Customer paid',
+          text: OFFLINE_COPY[method].confirm,
           onPress: async () => {
             setBusy('other');
             setError(null);
             try {
               const signaturePath = await saveSignature();
-              const saved = await recordJobPayment(job.id, closeOut, options(signaturePath));
-              setClosed({ totalCents: saved.totalCents, payoutCents: saved.techPayoutCents, byCard: false });
+              const saved = await recordJobPayment(job.id, closeOut, {
+                ...options(signaturePath),
+                paymentMethod: method === 'square_app' ? undefined : method,
+              });
+              setClosed({
+                totalCents: saved.totalCents,
+                payoutCents: saved.techPayoutCents,
+                method: method === 'square_app' ? 'card' : method,
+              });
               onClosed();
             } catch (e) {
               setError(e instanceof Error ? e.message : 'Could not close the job');
@@ -225,7 +265,7 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
       {closed ? (
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <Text style={styles.closedTitle}>
-            ✓ Paid {closed.byCard ? 'by card' : 'in person'} · {formatCents(closed.totalCents)}
+            ✓ Paid {METHOD_LABEL[closed.method]} · {formatCents(closed.totalCents)}
           </Text>
           <Text style={styles.closedPayout}>Your payout: {formatCents(closed.payoutCents)}</Text>
           <ReceiptSender job={job} onDone={onClose} />
@@ -427,31 +467,97 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
 
           {!!error && <Text style={styles.error}>{error}</Text>}
 
-          <TouchableOpacity
-            style={[styles.cardBtn, !card.available && styles.dim]}
-            disabled={busy !== null || !card.available}
-            onPress={() => void payByCard()}
-          >
-            {busy === 'card' ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.cardBtnText}>
-                {charged ? 'Finish closing the job (card already charged)' : `${cardLabel} · ${formatCents(closeOut.totalCents)}`}
-              </Text>
-            )}
-          </TouchableOpacity>
-          {!card.available && <Text style={styles.hint}>{card.reason}</Text>}
+          <Text style={styles.payLabel}>How is the customer paying?</Text>
+          <View style={styles.row}>
+            {(['card', 'zelle', 'cash'] as const).map((m) => (
+              <TouchableOpacity
+                key={m}
+                style={seg(payMethod === m)}
+                disabled={busy !== null || (Boolean(charged) && m !== 'card')}
+                onPress={() => setPayMethod(m)}
+              >
+                <Text style={styles.segText}>{METHOD_TAB[m]}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
-          {!charged && (
+          {payMethod === 'card' && (
+            <>
+              <TouchableOpacity
+                style={[styles.cardBtn, !card.available && styles.dim]}
+                disabled={busy !== null || !card.available}
+                onPress={() => void payByCard()}
+              >
+                {busy === 'card' ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.cardBtnText}>
+                    {charged ? 'Finish closing the job (card already charged)' : `${cardLabel} · ${formatCents(closeOut.totalCents)}`}
+                  </Text>
+                )}
+              </TouchableOpacity>
+              {!card.available && <Text style={styles.hint}>{card.reason}</Text>}
+
+              {!charged && (
+                <TouchableOpacity
+                  style={[styles.otherBtn, (!!problem || busy !== null) && styles.dim]}
+                  disabled={!!problem || busy !== null}
+                  onPress={() => confirmPaid('square_app')}
+                >
+                  {busy === 'other' ? (
+                    <ActivityIndicator color={colors.text.primary} />
+                  ) : (
+                    <Text style={styles.otherBtnText}>Charged on the Square app instead</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </>
+          )}
+
+          {payMethod === 'zelle' && (
+            <View style={[styles.card, styles.zelleCard]}>
+              <Text style={styles.zelleAmount}>{formatCents(closeOut.totalCents)}</Text>
+              {zelle?.qrPayload ? (
+                <View style={styles.qrWrap}>
+                  <QrCode value={zelle.qrPayload} size={220} />
+                </View>
+              ) : (
+                <Text style={styles.hint}>
+                  {zelle ? 'The company Zelle QR code isn’t set up yet — ask an admin.' : 'Loading Zelle details…'}
+                </Text>
+              )}
+              <Text style={styles.zelleStep}>
+                1. Customer opens their bank app → Zelle → scan this code
+                {zelle?.recipient ? ` (or send to ${zelle.recipient})` : ''}.
+              </Text>
+              <Text style={styles.zelleStep}>
+                2. They send exactly {formatCents(closeOut.totalCents)} to {zelleName(zelle)} with memo {job.referenceCode}.
+              </Text>
+              <Text style={styles.zelleStep}>3. Check the confirmation on their screen, then tap below.</Text>
+              <TouchableOpacity
+                style={[styles.cardBtn, (!!problem || busy !== null) && styles.dim]}
+                disabled={busy !== null}
+                onPress={() => confirmPaid('zelle')}
+              >
+                {busy === 'other' ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.cardBtnText}>Zelle received · {formatCents(closeOut.totalCents)}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {payMethod === 'cash' && (
             <TouchableOpacity
-              style={[styles.otherBtn, (!!problem || busy !== null) && styles.dim]}
-              disabled={!!problem || busy !== null}
-              onPress={paidAnotherWay}
+              style={[styles.cardBtn, (!!problem || busy !== null) && styles.dim]}
+              disabled={busy !== null}
+              onPress={() => confirmPaid('cash')}
             >
               {busy === 'other' ? (
-                <ActivityIndicator color={colors.text.primary} />
+                <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.otherBtnText}>Paid another way (cash / Square app)</Text>
+                <Text style={styles.cardBtnText}>Cash received · {formatCents(closeOut.totalCents)}</Text>
               )}
             </TouchableOpacity>
           )}
@@ -690,6 +796,11 @@ const styles = StyleSheet.create({
   },
   otherBtnText: { color: colors.text.primary, fontSize: 15, fontWeight: '700' },
   hint: { color: colors.text.muted, fontSize: 12, textAlign: 'center' },
+  payLabel: { color: colors.text.secondary, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', marginTop: spacing.sm },
+  zelleCard: { alignItems: 'stretch', gap: spacing.sm },
+  zelleAmount: { color: colors.text.primary, fontSize: 28, fontWeight: '900', textAlign: 'center' },
+  qrWrap: { alignSelf: 'center', padding: 8, backgroundColor: '#fff', borderRadius: borderRadius.md },
+  zelleStep: { color: colors.text.secondary, fontSize: 13, lineHeight: 19 },
   closedTitle: { color: colors.text.primary, fontSize: 22, fontWeight: '800' },
   closedPayout: { color: '#a7f3d0', fontSize: 15 },
   sendTitle: { color: colors.text.primary, fontSize: 17, fontWeight: '800' },
