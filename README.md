@@ -27,7 +27,7 @@ https://github.com/RealAdaptivity/AdaptivityTechApp
 
 ## Google Play (Android)
 
-Package: `com.adaptivityperformance.tech`
+Package: `com.adaptivityperformance.techapp` (iOS bundle ID stays `com.adaptivityperformance.tech`)
 
 Privacy policy (store listing): https://adaptivityperformance.com/privacy
 
