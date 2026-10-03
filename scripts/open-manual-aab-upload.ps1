@@ -37,7 +37,7 @@ Start-Process 'https://expo.fyi/first-android-submission'
 if ($App -eq 'tech' -or $App -eq 'both') {
   Open-Upload `
     -Label 'Adaptivity Tech Dispatch' `
-    -Package 'com.adaptivityperformance.techapp' `
+    -Package 'com.adaptivity.perf' `
     -AabPath (Join-Path $techRoot 'dist\adaptivity-tech-dispatch.aab') `
     -ExpoBuildUrl 'https://expo.dev/accounts/adaptivityperformance/projects/adaptivity-tech-dispatch/builds/f06e9bdd-d3ae-4bac-9a72-8a2d72316efa'
 }
