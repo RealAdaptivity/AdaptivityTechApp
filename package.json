@@ -39,5 +39,16 @@
     "eas:submit:ios": "npx eas-cli submit --profile production --platform ios",
     "eas:submit:android": "npx eas-cli submit --profile production --platform android"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "mobile-payments-sdk-react-native",
+          "qrcode"
+        ],
+        "listUnknownPackages": false
+      }
+    }
+  }
 }
