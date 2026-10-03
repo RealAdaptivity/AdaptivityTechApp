@@ -30,7 +30,7 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundColor": "#090a0f"
       },
-      "package": "com.adaptivityperformance.tech"
+      "package": "com.adaptivity.perf"
     },
     "plugins": [
       "expo-notifications",
