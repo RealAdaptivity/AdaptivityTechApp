@@ -36,6 +36,7 @@ import {
   type ReceiptSendResult,
 } from '../lib/jobPayments';
 import { fetchZelleConfig, type ZelleConfig } from '../lib/zelle';
+import { cashHandlingSteps } from '../lib/cashHandling';
 import { QrCode } from './QrCode';
 import {
   iphoneTapToPayStatus,
@@ -617,17 +618,31 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
           )}
 
           {payMethod === 'cash' && (
-            <TouchableOpacity
-              style={[styles.cardBtn, (!!problem || busy !== null) && styles.dim]}
-              disabled={busy !== null}
-              onPress={() => confirmPaid('cash')}
-            >
-              {busy === 'other' ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.cardBtnText}>Cash received · {formatCents(closeOut.totalCents)}</Text>
-              )}
-            </TouchableOpacity>
+            <View style={[styles.card, styles.zelleCard, styles.cashCard]}>
+              <Text style={styles.zelleAmount}>{formatCents(closeOut.totalCents)}</Text>
+              <Text style={styles.cashTitle}>What to do with the cash</Text>
+              {cashHandlingSteps({
+                amount: formatCents(closeOut.totalCents),
+                referenceCode: job.referenceCode,
+                zelleName: zelle?.displayName,
+                zelleRecipient: zelle?.recipient,
+              }).map((step, i) => (
+                <Text key={step} style={styles.zelleStep}>
+                  {i + 1}. {step}
+                </Text>
+              ))}
+              <TouchableOpacity
+                style={[styles.cardBtn, (!!problem || busy !== null) && styles.dim]}
+                disabled={busy !== null}
+                onPress={() => confirmPaid('cash')}
+              >
+                {busy === 'other' ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.cardBtnText}>Cash received · {formatCents(closeOut.totalCents)}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           )}
           <Text style={styles.hint}>
             {problem ?? (charged ? 'Card charged — finish closing to save it.' : 'Ready — choose how the customer paid.')}
@@ -907,6 +922,8 @@ const styles = StyleSheet.create({
   zelleCard: { alignItems: 'stretch', gap: spacing.sm },
   zelleAmount: { color: colors.text.primary, fontSize: 28, fontWeight: '900', textAlign: 'center' },
   qrWrap: { alignSelf: 'center', padding: 8, backgroundColor: '#fff', borderRadius: borderRadius.md },
+  cashCard: { borderColor: 'rgba(245,158,11,0.3)' },
+  cashTitle: { color: '#fde68a', fontSize: 14, fontWeight: '800' },
   zelleStep: { color: colors.text.secondary, fontSize: 13, lineHeight: 19 },
   closedTitle: { color: colors.text.primary, fontSize: 22, fontWeight: '800' },
   closedPayout: { color: '#a7f3d0', fontSize: 15 },
