@@ -352,6 +352,7 @@ export const JobsScreen: React.FC = () => {
               lines: [],
               diagnosticCents: 0,
               travelCents: 0,
+              weatherCents: 0,
               taxMode: 'none',
               partsBy: 'tech',
             });

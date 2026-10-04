@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { colors, spacing, borderRadius } from '../theme/colors';
 import type { DispatchBooking } from '../lib/supabase';
-import { DIAGNOSTIC_FEE_DOLLARS, TRAVEL_FEE_DOLLARS } from '../lib/pricing';
+import { DIAGNOSTIC_FEE_DOLLARS, TRAVEL_FEE_DOLLARS, WEATHER_FEE_DOLLARS } from '../lib/pricing';
 import {
   closeOutProblem,
   computeCloseOut,
@@ -109,6 +109,7 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
   const [lines, setLines] = useState<LineDraft[]>([EMPTY_LINE]);
   const [diagChoice, setDiagChoice] = useState<DiagChoice>('auto');
   const [member, setMember] = useState(false);
+  const [weather, setWeather] = useState(false);
   const [taxMode, setTaxMode] = useState<TaxMode>('parts');
   const [partsBy, setPartsBy] = useState<PartsBy>('tech');
   const [notes, setNotes] = useState('');
@@ -156,10 +157,11 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
         lines,
         diagnosticCents: collectDiag ? diagnosticFeeCents : 0,
         travelCents: shop || member ? 0 : TRAVEL_FEE_DOLLARS * 100,
+        weatherCents: weather && !shop && !member ? WEATHER_FEE_DOLLARS * 100 : 0,
         taxMode,
         partsBy,
       }),
-    [mode, lines, collectDiag, diagnosticFeeCents, shop, member, taxMode, partsBy]
+    [mode, lines, collectDiag, diagnosticFeeCents, shop, member, weather, taxMode, partsBy]
   );
   const problem = closeOutProblem(closeOut, signed && signerName.trim().length > 1);
   const locked = Boolean(charged) || busy !== null;
@@ -435,6 +437,12 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
                 <Text style={[styles.rAmount, member && styles.struck]}>{formatCents(TRAVEL_FEE_DOLLARS * 100)}</Text>
               </View>
             )}
+            {closeOut.weatherCents > 0 && (
+              <View style={styles.rLine}>
+                <Text style={[styles.rLabel, { flex: 1 }]}>Severe weather fee</Text>
+                <Text style={styles.rAmount}>{formatCents(closeOut.weatherCents)}</Text>
+              </View>
+            )}
             {closeOut.taxCents > 0 && (
               <View style={styles.rLine}>
                 <Text style={[styles.rLabel, { flex: 1 }]}>
@@ -473,8 +481,18 @@ export const GetPaidScreen: React.FC<Props> = ({ job, visible, onClose, onClosed
           <Text style={styles.cap}>Settings for this job</Text>
           {!shop && (
             <View style={styles.setting}>
-              <Text style={styles.settingText}>Member — waive travel</Text>
+              <Text style={styles.settingText}>Member — waive travel & weather fees</Text>
               <Switch value={member} disabled={locked} onValueChange={setMember} />
+            </View>
+          )}
+          {!shop && !member && (
+            <View style={styles.setting}>
+              <Text style={styles.settingText}>
+                Rain / severe weather · +{formatCents(WEATHER_FEE_DOLLARS * 100)}
+                {'\n'}
+                <Text style={styles.settingHint}>Tell the customer before you start</Text>
+              </Text>
+              <Switch value={weather} disabled={locked} onValueChange={setWeather} />
             </View>
           )}
           {mode === 'charge' && (
@@ -825,6 +843,7 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   settingText: { color: colors.text.primary, fontSize: 14, flexShrink: 1 },
+  settingHint: { color: colors.text.muted, fontSize: 12 },
   notes: {
     minHeight: 60,
     marginTop: 6,

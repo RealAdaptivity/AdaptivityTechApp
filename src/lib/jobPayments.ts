@@ -44,6 +44,7 @@ export function closeOutPayload(closeOut: CloseOut, opts: CloseOutOptions) {
     })),
     diagnostic_cents: closeOut.diagnosticCents,
     travel_cents: closeOut.travelCents,
+    weather_cents: closeOut.weatherCents,
     tax_mode: opts.taxMode,
     parts_by: opts.partsBy,
     signature_path: opts.signaturePath ?? null,
